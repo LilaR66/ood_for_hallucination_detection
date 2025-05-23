@@ -21,20 +21,27 @@ Outputs:
 - outputs/id_test_results.pkl
 - outputs/od_test_results.pkl
 """
+# ====================================
+# Find source repository 
+# ====================================
+import sys
+import os
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+sys.path.append(project_root)
 
 # ====================================
 # Import librairies
 # ====================================
 from typing import Optional, Tuple
 import time
-from utils.general import seed_all, print_time_elapsed
-from models.llama_loader import load_llama
-from data.squad_loader import (
+from src.utils.general import seed_all, print_time_elapsed
+from src.model_loader.llama_loader import load_llama
+from src.data_reader.squad_loader import (
     load_id_fit_dataset, 
     load_id_test_dataset, 
     load_od_test_dataset
 )
-from inference.inference_utils import (
+from src.inference.inference_utils import (
     batch_extract_token_activations_with_generation, 
     batch_extract_token_activations, 
     build_prompt, 
@@ -48,11 +55,7 @@ from inference.inference_utils import (
 SEED = 44
 BATCH_SIZE = 16
 MODEL_NAME =  "meta-llama/Llama-2-7b-chat-hf"
-OUTPUT_DIR = "outputs/"
-
-
-
-# FAIRE UN ARGPARSE
+OUTPUT_DIR = "../results/raw/test/"
 
 
 # ====================================
@@ -95,6 +98,7 @@ def prepare_fit_embeddings(
 
     # Shuffle if needed 
     if shuffle:
+        print("Shuffle dataset")
         id_fit_dataset = id_fit_dataset.shuffle(seed)
 
     # Select a subset of the dataset if needed
@@ -102,6 +106,7 @@ def prepare_fit_embeddings(
         and len(select_slice) == 2
         and 0 <= select_slice[0] < select_slice[1] <= len(id_fit_dataset)
         ):
+        print(f"Select dataset slice: {select_slice}")
         id_fit_dataset = id_fit_dataset.slice(idx_start=select_slice[0], idx_end=select_slice[1])
 
     # Retrieve ID embeddings and save results
@@ -173,6 +178,7 @@ def prepare_test_embeddings(
 
     # Shuffle if needed 
     if shuffle:
+        print("Shuffle dataset")
         id_test_dataset = id_test_dataset.shuffle(seed)
         od_test_dataset = od_test_dataset.shuffle(seed)
 
@@ -182,6 +188,7 @@ def prepare_test_embeddings(
         and 0 <= select_slice[0] < select_slice[1] <= len(id_test_dataset)
         and select_slice[1] <= len(od_test_dataset)
         ):
+        print(f"Select dataset slice: {select_slice}")
         id_test_dataset = id_test_dataset.slice(idx_start=select_slice[0], idx_end=select_slice[1])
         od_test_dataset = od_test_dataset.slice(idx_start=select_slice[0], idx_end=select_slice[1])
 
@@ -239,123 +246,10 @@ def main() -> None:
     """
     Main entry point for the embedding extraction pipeline.
     """
-    prepare_fit_embeddings()
-    prepare_test_embeddings()
+    prepare_fit_embeddings(shuffle=True, select_slice=(0,100))
+    prepare_test_embeddings(shuffle=True, select_slice=(0,100))
 
 
 if __name__ == "__main__":
     main()
 
-
-
-
-'''
-def main():
-
-
-    # Seed everything
-    # -----------------------------------
-    seed_all(SEED)
-
-    # Load model
-    # -----------------------------------
-    model, tokenizer = load_llama("meta-llama/Llama-2-7b-chat-hf")
-
-    # Load ID dataset
-    # -----------------------------------
-    id_fit_dataset = load_id_fit_dataset()
-
-    # Retrieve ID embeddings and save results 
-    # -----------------------------------
-    # Runs batched inference on a dataset using a decoder-only language model.
-    # For each batch, generates answers, computes semantic similarity scores, extracts token-level activations,
-    # and appends the results to a pickle file.
-    print("\nStart retrieving ID embeddings...")
-    t0 = time.time()
-    batch_extract_token_activations_with_generation(
-        model=model,
-        tokenizer=tokenizer,
-        dataset=id_fit_dataset,
-        batch_size=BATCH_SIZE,
-        idx_start_sample=0,
-        max_samples=len(id_fit_dataset),
-        output_path = "outputs/id_fit_results.pkl",
-        build_prompt_fn=build_prompt,
-        get_layer_output_fn=get_layer_output,
-        layer_idx=-1,  
-        extract_token_activations_fn=extract_last_token_activations,
-        offset=-5
-    )
-    t1 = time.time()
-    print("...end!")
-    print_time_elapsed(t0, t1, label="ID embeddings: ")
-
-    # Free memory 
-    del id_fit_dataset 
-
-    # Load test datasets
-    # -----------------------------------
-    # Load possible test dataset 
-    id_test_dataset = load_id_test_dataset()
-    id_test_dataset = id_test_dataset.shuffle(SEED) 
-    id_test_dataset = id_test_dataset.slice(idx_start=0, idx_end=10000)
-
-    # Load impossible test dataset 
-    od_test_dataset = load_od_test_dataset()
-    od_test_dataset = od_test_dataset.shuffle(SEED) 
-    od_test_dataset = od_test_dataset.slice(idx_start=0, idx_end=10000)
-
-    # Retrieve test embeddings and save results 
-    # -----------------------------------
-    # Runs batched inference on a dataset using a decoder-only language model.
-    # For each batch, gextracts token-level activations, and appends the results to a pickle file.
-    print("\nStart retrieving test impossible embeddings...")
-    t2 = time.time()
-    batch_extract_token_activations(
-        model=model,
-        tokenizer=tokenizer,
-        dataset=od_test_dataset,
-        batch_size=BATCH_SIZE,
-        idx_start_sample=0,
-        max_samples=len(od_test_dataset),
-        save_to_pkl = True,
-        output_path = "outputs/od_test_results.pkl",
-        build_prompt_fn=build_prompt,
-        get_layer_output_fn=get_layer_output,
-        layer_idx=-1,  
-        extract_token_activations_fn=extract_last_token_activations,
-        offset=-5
-    )
-    t3 = time.time()
-    print("...end!")
-    print_time_elapsed(t2, t3, label="Test impossible embeddings: ")
-
-
-    print("\nStart retrieving test possible embeddings...")
-    t4 = time.time()
-    batch_extract_token_activations(
-        model=model,
-        tokenizer=tokenizer,
-        dataset=id_test_dataset,
-        batch_size=BATCH_SIZE,
-        idx_start_sample=0,
-        max_samples=len(id_test_dataset),
-        save_to_pkl = True,
-        output_path = "outputs/id_test_results.pkl",
-        build_prompt_fn=build_prompt,
-        get_layer_output_fn=get_layer_output,
-        layer_idx=-1,  
-        extract_token_activations_fn=extract_last_token_activations,
-        offset=-5
-    )
-    t5 = time.time()
-    print("...end!")
-    print_time_elapsed(t4, t5, label="Test possible embeddings: ")
-
-    # Free memory 
-    del od_test_dataset 
-    del id_test_dataset
-
-    # Print total time
-    print_time_elapsed(t0, t5, label="Total pipeline: ")
-'''
