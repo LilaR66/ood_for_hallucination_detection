@@ -212,7 +212,6 @@ class SquadDataset:
         print(self.dataset)
 
         # Skip samples with empty text to avoid index errors
-        #valid_texts = [ans['text'][0] for ans in self.dataset['answers'] if isinstance(ans['text'], list) and len(ans['text']) > 0 and ans['text'][0] != ""]
         valid_texts = [ans['text'] for ans in self.dataset['answers'] if ans['text']!= ""]
         lengths = [len(text.split()) for text in valid_texts]
 

@@ -22,7 +22,6 @@ import string
 from rouge_score import rouge_scorer
 from sentence_transformers import SentenceTransformer, util
 from difflib import SequenceMatcher
-import pandas as pd
 
 
 def normalize_answer(s: str) -> str:
