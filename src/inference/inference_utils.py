@@ -33,13 +33,15 @@ import time
 from src.evaluation.similarity_metrics import rouge_l_simScore, sentence_bert_simScore
 from src.data_reader.pickle_io import append_to_pickle
 
+# Specific to Llama tokenizer: 
 def build_prompt(context:str, question:str) -> str:
     """
     Construct a structured prompt for question answering with an LLM.
 
-    The prompt includes the special `<s>[INST] "Input intruction here" [/INST]` 
+    The prompt includes the special `[INST] "Input intruction here" [/INST]` 
     (to indicate the start of the instruction block).
-    
+
+    **Note:** the llama tokenizer adds a special `<s> ` before `[INST]`. 
     **Note:** we also experimented with giving 2-3 few shot prompts. 
     However, just appending the sentence "Just give the answer, without a complete sentence." 
     at the begining of the prompt seemed to work best. 
@@ -57,11 +59,10 @@ def build_prompt(context:str, question:str) -> str:
         A formatted prompt string ready to be fed to a language model.
     
     """
-    prompt = f"<s>[INST]\n\nJust give the answer, without a complete sentence. \
-          \n\nContext:\n" + context + "\n\nQuestion:\n" + question  + "\n\nAnswer:\n[/INST]" 
+    prompt = f"[INST]\n\nJust give the answer, without a complete sentence.\n\nContext:\n" + context + "\n\nQuestion:\n" + question  + "\n\nAnswer:\n[/INST]" 
     return prompt
 
-
+# Specific to Llama tokenizer: 
 def build_impossible_prompt(context:str, question:str) -> str:
     """
     Construct a structured prompt for question answering with an LLM.
@@ -69,6 +70,7 @@ def build_impossible_prompt(context:str, question:str) -> str:
     The prompt includes the special `<s>[INST] "Input intruction here" [/INST]` 
     (to indicate the start of the instruction block).
     
+    **Note:** the llama tokenizer adds a special `<s> ` before `[INST]`.
     **Note:** we also experimented with giving 2-3 few shot prompts. 
     However, just appending the sentence "Just give the answer, without a complete sentence." 
     at the begining of the prompt seemed to work best. 
@@ -87,8 +89,7 @@ def build_impossible_prompt(context:str, question:str) -> str:
         A formatted prompt string ready to be fed to a language model.
     
     """
-    prompt = f"<s>[INST]\n\nJust give the answer, without a complete sentence. Reply with 'Impossible to answer' if answer not in context.\
-            \n\nContext:\n" + context + "\n\nQuestion:\n" + question  + "\n\nAnswer:\n[/INST]" 
+    prompt = f"[INST]\n\nJust give the answer, without a complete sentence. Reply with 'Impossible to answer' if answer not in context.\n\nContext:\n" + context + "\n\nQuestion:\n" + question  + "\n\nAnswer:\n[/INST]" 
     return prompt
 
 
@@ -168,11 +169,11 @@ def extract_batch(
     """
     end_idx = min(idx_start + batch_size, len(dataset))
     batch = dataset.select(range(idx_start, end_idx))
-    #batch = dataset.select(range(idx_start, idx_start + batch_size))
     batch_dicts = batch.to_dict()
     return [dict(zip(batch_dicts.keys(), vals)) for vals in zip(*batch_dicts.values())]
 
 
+# Specific to Llama tokenizer: 
 def extract_last_token_activations(
     selected_layer: torch.Tensor,
     attention_mask: torch.Tensor,
@@ -181,12 +182,12 @@ def extract_last_token_activations(
 ) -> torch.Tensor:
     """
     Extract the activation vector of the token at a specific offset 
-    from the last non-padding token in each sequence.
+    from the last non-padding token in each sequence. 
     
     Example: when working with structured question-answering (QA) prompts, such as:
-    <s>[INST]\n\nContext:\n...\n\nQuestion:\n...\n\nAnswer:\n[/INST]
-    we want to extract the token embedding of the '\n' just after 'Answer:'. 
-    Since the tokeniser tokenizes '\n[/INST]' into '\n', '[', '/', 'INST', ']' we 
+    <s> [INST]\n\nContext:\n...\n\nQuestion:\n...\n\nAnswer:\n[/INST]
+    for the last token embeddings, we want to extract the token embedding of the '\n' just after 'Answer:'. 
+    Since the llama tokeniser tokenizes '\n[/INST]' into '\n', '[', '/', 'INST', ']' we 
     select '\n' with an offset of -5. 
 
     Parameters
@@ -206,7 +207,13 @@ def extract_last_token_activations(
         Activation vectors of the selected token for each input (shape: batch_size x hidden_size).
     """
     # Find the index of the last non-padding token for each sequence
-    last_indices = (attention_mask.sum(dim=1) - 1).to(device)
+    # Handle left and right padding
+    if (attention_mask[:, 0] == 0).any():  # If any sequence starts with padding, assume left padding
+        last_indices = (attention_mask.size(1) - 1) - attention_mask.flip(dims=[1]).argmax(dim=1)
+    else:  # right padding
+        last_indices = (attention_mask.sum(dim=1) - 1)
+    last_indices = last_indices.to(device)
+
     # Compute the target index using the offset
     target_indices = (last_indices + offset + 1)
     batch_indices = torch.arange(selected_layer.size(0), device=device)
