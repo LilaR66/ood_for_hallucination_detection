@@ -112,7 +112,8 @@ def score_tensor(
 def compute_auroc(
     dknn_scores_id: np.ndarray,
     dknn_scores_ood: np.ndarray,
-    plot: bool = False
+    plot: bool = False,
+    save_path: str = None,
 ) -> Tuple[float, np.ndarray, np.ndarray, np.ndarray]:
     """
     Compute the Area Under the ROC Curve (auROC) for OOD detection using DKNN scores.
@@ -129,6 +130,8 @@ def compute_auroc(
         DKNN scores for OOD samples.
     plot : bool, optional (default=False)
         If True, plot the ROC curve.
+    save_path : str, optional (default=None)
+        If provided, save the ROC curve image to this path (e.g. "plot.png").
 
     Returns
     -------
@@ -155,7 +158,7 @@ def compute_auroc(
     print(f"auROC: {auroc:.4f}")
 
     # Optionally plot the ROC curve
-    if plot:
+    if plot or save_path:
         plt.figure()
         plt.plot(fpr, tpr, label=f"auROC = {auroc:.4f}")
         plt.xlabel("False Positive Rate")
@@ -163,7 +166,12 @@ def compute_auroc(
         plt.title("ROC Curve")
         plt.legend()
         plt.grid(True)
-        plt.show()
+        if save_path:
+            plt.savefig(save_path, bbox_inches='tight')
+        if plot:
+            plt.show()
+        else:
+            plt.close()
 
     return auroc, fpr, tpr, thresholds
 
@@ -175,7 +183,8 @@ def plot_score_distributions(
     bins: int = 50,
     xlabel: str = "Distance to k-th NN",
     title: str = "Distribution of DKNN Scores",
-    figsize: Tuple[int, int] = (10, 6)
+    figsize: Tuple[int, int] = (10, 6),
+    save_path: str = None,
 ) -> plt.Figure:
     """
     Plot overlapping histograms of ID and OOD scores to compare their distributions.
@@ -194,6 +203,8 @@ def plot_score_distributions(
         Plot title
     figsize : Tuple[int, int], optional
         Figure size
+    save_path : str, optional
+        If provided, the plot will be saved to this path (e.g. "plot.png")
 
     Returns
     -------
@@ -223,6 +234,8 @@ def plot_score_distributions(
         horizontalalignment="left",
         bbox=dict(boxstyle="round", alpha=0.2, facecolor="w")
     )
+    if save_path:
+        plt.savefig(save_path, bbox_inches='tight')
 
     plt.show()
     #return plt.gcf() # return figure if needed
