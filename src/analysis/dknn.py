@@ -166,3 +166,63 @@ def compute_auroc(
         plt.show()
 
     return auroc, fpr, tpr, thresholds
+
+
+
+def plot_score_distributions(
+    dknn_scores_id: np.ndarray,
+    dknn_scores_ood: np.ndarray,
+    bins: int = 50,
+    xlabel: str = "Distance to k-th NN",
+    title: str = "Distribution of DKNN Scores",
+    figsize: Tuple[int, int] = (10, 6)
+) -> plt.Figure:
+    """
+    Plot overlapping histograms of ID and OOD scores to compare their distributions.
+
+    Parameters
+    ----------
+    dknn_scores_id : np.ndarray
+        Scores for in-distribution samples
+    dknn_scores_ood : np.ndarray
+        Scores for out-of-distribution samples
+    bins : int, optional (default=50)
+        Number of histogram bins
+    xlabel : str, optional
+        Label for x-axis
+    title : str, optional
+        Plot title
+    figsize : Tuple[int, int], optional
+        Figure size
+
+    Returns
+    -------
+    plt.Figure
+        Matplotlib figure object
+    """
+    plt.figure(figsize=figsize)
+    
+    # Plot histograms with transparency
+    plt.hist(dknn_scores_id, bins=bins, alpha=0.5, label="ID", density=True, color="blue")
+    plt.hist(dknn_scores_ood, bins=bins, alpha=0.5, label="OOD", density=True, color="red")
+    
+    # Add labels and styling
+    plt.xlabel(xlabel, fontsize=12)
+    plt.ylabel("Density", fontsize=12)
+    plt.title(title, fontsize=14)
+    plt.legend(loc="upper right")
+    plt.grid(True, linestyle="--", alpha=0.7)
+    
+    # Add text box with summary stats
+    stats_text = (f"ID mean: {dknn_scores_id.mean():.2f} ± {dknn_scores_id.std():.2f}\n"
+                  f"OOD mean: {dknn_scores_ood.mean():.2f} ± {dknn_scores_ood.std():.2f}")
+    plt.gca().text(
+        0.0, 0.95, stats_text,
+        transform=plt.gca().transAxes,
+        verticalalignment="top",
+        horizontalalignment="left",
+        bbox=dict(boxstyle="round", alpha=0.2, facecolor="w")
+    )
+
+    plt.show()
+    #return plt.gcf() # return figure if needed
