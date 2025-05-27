@@ -27,7 +27,7 @@ from transformers import PreTrainedTokenizer, PreTrainedModel, BatchEncoding
 import torch
 from datasets import  Dataset
 from tqdm import tqdm
-from typing import Dict, List, Any, Callable
+from typing import Dict, List, Any, Callable, Tuple
 import time
 
 from src.evaluation.similarity_metrics import rouge_l_simScore, sentence_bert_simScore
@@ -38,8 +38,8 @@ def build_prompt(context:str, question:str) -> str:
     """
     Construct a structured prompt for question answering with an LLM.
 
-    The prompt includes the special `[INST] "Input intruction here" [/INST]` 
-    (to indicate the start of the instruction block).
+    The prompt includes the special formatting: `[INST]`, [/INST]`, `<<SYS>>`
+    as recommended here: https://huggingface.co/meta-llama/Llama-2-7b-chat-hf
 
     **Note:** the llama tokenizer adds a special `<s> ` before `[INST]`. 
     **Note:** we also experimented with giving 2-3 few shot prompts. 
@@ -59,37 +59,7 @@ def build_prompt(context:str, question:str) -> str:
         A formatted prompt string ready to be fed to a language model.
     
     """
-    prompt = f"[INST]\n\nJust give the answer, without a complete sentence.\n\nContext:\n" + context + "\n\nQuestion:\n" + question  + "\n\nAnswer:\n[/INST]" 
-    return prompt
-
-# Specific to Llama tokenizer: 
-def build_impossible_prompt(context:str, question:str) -> str:
-    """
-    Construct a structured prompt for question answering with an LLM.
-
-    The prompt includes the special `<s>[INST] "Input intruction here" [/INST]` 
-    (to indicate the start of the instruction block).
-    
-    **Note:** the llama tokenizer adds a special `<s> ` before `[INST]`.
-    **Note:** we also experimented with giving 2-3 few shot prompts. 
-    However, just appending the sentence "Just give the answer, without a complete sentence." 
-    at the begining of the prompt seemed to work best. 
-    **Note:** Since this answer is impossible, we add a prompt to inform the model. 
-
-    Parameters
-    ----------
-    context : str
-        The input passage or context from which the answer should be extracted.
-    question : str
-        The question to be answered based on the provided context.
-
-    Returns
-    -------
-    str
-        A formatted prompt string ready to be fed to a language model.
-    
-    """
-    prompt = f"[INST]\n\nJust give the answer, without a complete sentence. Reply with 'Impossible to answer' if answer not in context.\n\nContext:\n" + context + "\n\nQuestion:\n" + question  + "\n\nAnswer:\n[/INST]" 
+    prompt = f"[INST] <<SYS>>\nJust give the answer, without a complete sentence. Reply with 'Impossible to answer' if answer not in context.\n<<SYS>>\n\nContext:\n" + context + "\n\nQuestion:\n" + question  + "\n\nAnswer:\n[/INST]" 
     return prompt
 
 
@@ -173,22 +143,111 @@ def extract_batch(
     return [dict(zip(batch_dicts.keys(), vals)) for vals in zip(*batch_dicts.values())]
 
 
+def compute_token_offsets(
+    text: str,
+    tokenizer: PreTrainedTokenizer,
+    start_phrase: str,
+    end_phrase: str,
+    debug: bool = False
+) -> Tuple[int, int]:
+    """
+    Compute start_offset (number of tokens before the first occurrence of start_phrase)
+    and end_offset (number of tokens after the last occurrence of end_phrase)
+    in the tokenized version of `text`.
+    
+     Parameters
+    ----------
+    text : str
+        The input prompt text.
+    tokenizer : PreTrainedTokenizer
+        HuggingFace tokenizer instance.
+    start_phrase : str
+        The phrase before which to count tokens (e.g., "Context:").
+    end_phrase : str
+        The phrase after which to count tokens (e.g., "[/INST]").
+    debug : bool = False
+        Wheter to display information
+    
+    Returns
+    -------
+    start_offset : int
+        Number of tokens before the first occurrence of `start_phrase`.
+    end_offset : int
+        Number of tokens after the last occurrence of `end_phrase`.
+    """
+    if debug:
+        print("===== Input text =====")
+        print(text)
+
+    #----- Tokenize the input text and get the mapping from each token to its character position in the text
+    encoding = tokenizer( 
+        text,
+        return_offsets_mapping=True, # match each token to its exact position in the text
+        add_special_tokens=True #False
+    ) 
+    offsets = encoding['offset_mapping']  # List of (start_char, end_char) for each token
+    input_ids = encoding['input_ids']     # List of token IDs for the text
+ 
+    #----- Find character indices of the phrases in the text
+    # Find the character index where the start_phrase first appears in the text
+    start_char_idx = text.find(start_phrase)
+    # Find the character index where the end_phrase last appears in the text
+    end_char_idx = text.rfind(end_phrase)
+    # Raise an error if either phrase is not found
+    if start_char_idx == -1:
+        raise ValueError(f"Start phrase '{start_phrase}' not found in text.")
+    if end_char_idx == -1:
+        raise ValueError(f"End phrase '{end_phrase}' not found in text.")
+
+    #---- Find the index of the first token whose span covers or starts after the start_char_idx
+    start_offset = None
+    for idx, (start, end) in enumerate(offsets):
+        # If the token covers start_char_idx or starts after it, use this token
+        if start <= start_char_idx < end or start >= start_char_idx:
+            start_offset = idx
+            break
+    # If not found, default to the length of offsets (all tokens before)
+    if start_offset is None:
+        start_offset = len(offsets)
+
+    #---- Find last token whose span includes (or ends after) the end of end_phrase
+    # Compute the end character index for the end_phrase (i.e., where it finishes)
+    end_phrase_end = end_char_idx + len(end_phrase)
+    last_token_idx = None
+    # Find the index of the first token whose end position is at or after the end of end_phrase
+    for idx, (start, end) in enumerate(offsets):
+        if end >= end_phrase_end:
+            last_token_idx = idx
+            break
+    # If not found, default to the last token
+    if last_token_idx is None:
+        last_token_idx = len(offsets) - 1
+
+    #---- Calculate how many tokens are after the last token of end_phrase
+    end_offset = len(offsets) - (last_token_idx + 1)
+    end_offset = -end_offset
+
+    #---- Display text between start_offset and end_offset for verification
+    if debug:
+        print("\n===== Decoded text between `start_offset` and `end_offset` =====")
+        print(f"----START TEXT---{tokenizer.decode(input_ids[start_offset:end_offset])}----END TEXT---")
+        print(f"\nstart_offset: {start_offset}, end_offset:{end_offset}")
+
+    #---- Return the number of tokens before start_phrase and after end_phrase
+    return start_offset, end_offset
+
+
 # Specific to Llama tokenizer: 
 def extract_last_token_activations(
     selected_layer: torch.Tensor,
     attention_mask: torch.Tensor,
     device: torch.device,
-    end_offset: int = -5
+    end_offset: int = 0,
+    start_offset: int = 0
 ) -> torch.Tensor:
     """
-    Extract the activation vector of the token at a specific offset 
+    Extract the activation vector of the token at a specific end_offset 
     from the last non-padding token in each sequence. 
-    
-    Example: when working with structured question-answering (QA) prompts, such as:
-    <s> [INST]\n\nContext:\n...\n\nQuestion:\n...\n\nAnswer:\n[/INST]
-    For the last token embedding, we want to extract the token embedding of the '\n' just after 'Answer:'. 
-    Since the llama tokeniser tokenizes '\n[/INST]' into '\n', '[', '/', 'INST', ']' we 
-    select '\n' with an offset of -5. 
 
     Parameters
     ----------
@@ -199,7 +258,9 @@ def extract_last_token_activations(
     device : torch.device
         Device to perform indexing operations on.
     end_offset : int, optional
-        Negative offset from the last non-padding token (e.g., -5 for the 5th token before the end). Default is -5.
+        Negative offset from the last non-padding token. Default is 0
+    start_offset : int, optionnal
+        Not used here, only useful for the rest of the pipeline. 
 
     Returns
     -------
@@ -215,7 +276,7 @@ def extract_last_token_activations(
     last_indices = last_indices.to(device)
 
     # Compute the target index using the offset
-    target_indices = (last_indices + end_offset + 1)
+    target_indices = last_indices + end_offset #+1
     batch_indices = torch.arange(selected_layer.size(0), device=device)
     # Extract the activations at the target indices
     return selected_layer[batch_indices, target_indices]
@@ -226,21 +287,13 @@ def extract_average_token_activations(
     selected_layer: torch.Tensor,
     attention_mask: torch.Tensor,
     device: torch.device,
-    start_offset: int = 5,
-    end_offset: int = -5
+    start_offset: int = 0,
+    end_offset: int = 0
 ) -> torch.Tensor:
     """
-    Extracts the mean activation vector between the first and last target token (with offsets)
-    for each sequence in the batch.
-
-    Example: when working with structured question-answering (QA) prompts, such as:
-    <s> [INST]\n\nContext:\n...\n\nQuestion:\n...\n\nAnswer:\n[/INST]
-    For the last token embedding, we want to extract the token embedding of the '\n' just after 'Answer:'. 
-    Since the llama tokeniser tokenizes '\n[/INST]' into '\n', '[', '/', 'INST', ']' we 
-    select '\n' with an end_offset of -5. 
-    For the first token emmbedding, we want to extract the token embedding of the '\n' just after '[INST]:'
-    Since the llama tokeniser tokenizes '<s> [INST]\n' into '<s>', '[', 'INST', ']', '\n' we 
-    select '\n' with an start_offset of 5. 
+    Extract the mean activation vector over a token span for each sequence in a batch.
+    The span is defined by applying start_offset (from the first non-padding token)
+    and end_offset (from the last non-padding token).
 
     Parameters
     ----------
@@ -281,8 +334,8 @@ def extract_average_token_activations(
     last_indices = last_indices.to(device)
 
     # Apply offsets (e.g., skip <s> [INST] or [\INST])
-    target_first_indices = first_indices + start_offset - 1
-    target_last_indices = last_indices + end_offset + 1
+    target_first_indices = first_indices + start_offset #-1
+    target_last_indices = last_indices + end_offset #+1
 
     # Clamp indices to valid range
     target_first_indices = torch.clamp(target_first_indices, min=0, max=seq_len - 1)
@@ -319,17 +372,9 @@ def extract_max_token_activations(
     end_offset: int = -5
 ) -> torch.Tensor:
     """
-    Extracts the maximum activation values across each embedding dimension 
-    between the first and last target token (with offsets) for each sequence.
-
-    Example: when working with structured question-answering (QA) prompts, such as:
-    <s> [INST]\n\nContext:\n...\n\nQuestion:\n...\n\nAnswer:\n[/INST]
-    For the last token embedding, we want to extract the token embedding of the '\n' just after 'Answer:'. 
-    Since the llama tokeniser tokenizes '\n[/INST]' into '\n', '[', '/', 'INST', ']' we 
-    select '\n' with an end_offset of -5. 
-    For the first token emmbedding, we want to extract the token embedding of the '\n' just after '[INST]:'
-    Since the llama tokeniser tokenizes '<s> [INST]\n' into '<s>', '[', 'INST', ']', '\n' we 
-    select '\n' with an start_offset of 5. 
+    Extract the maximum activation vector over a token span for each sequence in a batch.
+    The span is defined by applying start_offset (from the first non-padding token)
+    and end_offset (from the last non-padding token).
 
     Parameters
     ----------
@@ -370,8 +415,8 @@ def extract_max_token_activations(
     last_indices = last_indices.to(device)
 
     # Apply offsets (e.g., skip <s> [INST] or [\INST])
-    target_first_indices = first_indices + start_offset - 1
-    target_last_indices = last_indices + end_offset + 1
+    target_first_indices = first_indices + start_offset #-1
+    target_last_indices = last_indices + end_offset #+1
 
     # Clamp indices to valid range
     target_first_indices = torch.clamp(target_first_indices, min=0, max=seq_len - 1)
