@@ -651,11 +651,13 @@ def batch_extract_token_activations_with_generation(
     build_prompt_fn : Callable
         Function to build a prompt from context and question.
     get_layer_output_fn : Callable
-        Function to extract the output of a specific model layer.
+        Function to extract the output of a specific model layer. 
+        If None, no token extraction is performed. 
     layer_idx : int
         Index of the transformer layer to extract activations from (default: -1 for last layer).
     extract_token_activations_fn : Callable
         Function to extract token activations from a model layer.
+        If None, no token extraction is performed. 
     **kwargs :
         Extra keyword arguments passed to extract_token_activations_fn.
     """
@@ -672,12 +674,21 @@ def batch_extract_token_activations_with_generation(
         prompts = [build_prompt_fn(s["context"], s["question"]) for s in batch]
         answers = [s["answers"]["text"] for s in batch]
         inputs = tokenizer(prompts, padding=True, truncation=True, return_tensors="pt").to(model.device)
-        selected_layer = get_layer_output_fn(model, inputs, layer_idx)
-        selected_token_vecs = extract_token_activations_fn(
-                selected_layer, 
-                inputs["attention_mask"], 
-                device=selected_layer.device,
-                **kwargs) 
+
+        # Extract token activations from the specified model layer,
+        # and format them as a list of tensors (one per sample) for saving.
+        if (get_layer_output_fn is not None) and (extract_token_activations_fn is not None):
+            selected_layer = get_layer_output_fn(model, inputs, layer_idx)
+            selected_token_vecs = extract_token_activations_fn(
+                    selected_layer, 
+                    inputs["attention_mask"], 
+                    device=selected_layer.device,
+                    **kwargs)
+            # format activations to save them later
+            activations = [selected_token_vecs[i].unsqueeze(0).cpu() for i in range(selected_token_vecs.size(0))]
+        else:
+            activations = [None for _ in range(batch_size)]
+
         output_ids = generate_answers(model, inputs, tokenizer)
         
         for j in range(len(prompts)):
@@ -710,7 +721,7 @@ def batch_extract_token_activations_with_generation(
             "original_indices": batch_dataset_original_idx,
             "gen_answers": batch_answers,
             "ground_truths": batch_gt_answers,
-            "activations": [selected_token_vecs[i].unsqueeze(0).cpu() for i in range(selected_token_vecs.size(0))],
+            "activations": activations,
             "is_correct": batch_is_correct,
             "sbert_scores": batch_sbert_scores,
             "rouge_scores": batch_rouge_scores

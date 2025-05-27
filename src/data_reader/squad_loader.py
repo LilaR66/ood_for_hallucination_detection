@@ -22,6 +22,8 @@ Main Features
 
 import numpy as np
 from datasets import load_dataset, Dataset
+import pickle
+import json
 
 class SquadDataset:
     """
@@ -139,6 +141,53 @@ class SquadDataset:
         self.dataset = self.dataset.select(indices)
         return self
 
+
+    def filter_by_column(self, column: str, values_to_keep: list):
+        """
+        Returns a new SquadDataset containing only the samples where the specified column's value
+        is present in the provided list of values.
+
+        Parameters
+        ----------
+        column : str
+            The name of the key/field in each sample (dictionary) on which to filter (e.g., 'id', 'title').
+        values_to_keep : list
+            A list of values. Only samples whose `column` value is in this list will be retained.
+
+        Returns
+        -------
+        SquadDataset
+            A new SquadDataset instance containing only the filtered samples.
+        """
+        values_set = set(values_to_keep)
+        indices = [i for i, ex in enumerate(self.dataset) if ex[column] in values_set]
+        return self.select(indices)
+    
+
+    def save(self, path : str, format="pickle"):
+        """
+        Save the dataset to disk in either pickle or JSON format.
+
+        Parameters
+        ----------
+        path : str
+            The file path where the dataset will be saved.
+        format : str, optional
+            The format to use: 'pickle' (default) or 'json'.
+        """
+        if format == "pickle":
+            with open(path, "wb") as f:
+                pickle.dump(self, f)
+                print(f"Dataset saved to {path}")
+        elif format == "json":
+            # Save only the data part (list of dicts)
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(self.dataset, f, ensure_ascii=False, indent=2)
+                print(f"Dataset saved to {path}")
+        else:
+            raise ValueError("Unsupported format: choose 'pickle' or 'json'")
+
+
     def filter_impossible(self):
         """
         Filter the dataset to keep only questions with no answer (i.e., empty 'answers["text"]').
@@ -201,7 +250,6 @@ class SquadDataset:
         """
         self.dataset = self.dataset.map(lambda x: {"is_impossible": value})
         return self
-
 
     def print_info(self):
         """
