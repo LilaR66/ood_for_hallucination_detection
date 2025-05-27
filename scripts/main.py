@@ -26,13 +26,14 @@ Outputs:
 # ====================================
 import sys
 import os
+import torch
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(project_root)
 
 # ====================================
 # Import librairies
 # ====================================
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Callable
 import time
 from src.utils.general import seed_all, print_time_elapsed
 from src.model_loader.llama_loader import load_llama
@@ -45,8 +46,10 @@ from src.inference.inference_utils import (
     batch_extract_token_activations_with_generation, 
     batch_extract_token_activations, 
     build_prompt, 
+    build_impossible_prompt,
     get_layer_output, 
-    extract_last_token_activations
+    extract_last_token_activations, 
+    extract_average_token_activations,
 )
 
 # ====================================
@@ -55,19 +58,27 @@ from src.inference.inference_utils import (
 SEED = 44
 BATCH_SIZE = 16
 MODEL_NAME =  "meta-llama/Llama-2-7b-chat-hf"
-OUTPUT_DIR = "../results/raw/test/"
+OUTPUT_DIR = "../results/raw/"
 
 
 # ====================================
 # Mains funtions 
 # ====================================
+def clear_cache():
+    torch.cuda.empty_cache()
+    torch.cuda.ipc_collect()
+
 def prepare_fit_embeddings(
     model_name: str = MODEL_NAME,
     batch_size: int = BATCH_SIZE,
     seed: int = SEED,
     output_path: str = OUTPUT_DIR + "id_fit_results.pkl",
     shuffle: bool = False,
-    select_slice: Optional[Tuple[int, int]]  = None
+    select_slice: Optional[Tuple[int, int]]  = None,
+    layer_idx: int = -1,
+    build_prompt_fn: Callable = None,
+    extract_token_activations_fn: Callable = None,
+    **kwargs 
 ) -> None:
     """
     Extract and save embeddings for the in-distribution (ID) training set.
@@ -86,6 +97,14 @@ def prepare_fit_embeddings(
         If true the dataset if shuffled with seed. 
     select_slice : Optional[Tuple[int, int]]
         (start, end) indices for slicing the dataset.
+    layer_idx : int
+        Index of the transformer layer to extract activations from.
+    build_prompt_fn : callable
+        Function to build a prompt from context and question.
+    extract_token_activations_fn : callable
+        Function to extract token activations from a model layer.
+    **kwargs :
+        Extra keyword arguments passed to extract_token_activations_fn (e.g., start_offset, end_offset).
     """
     # Seed everything
     seed_all(seed)
@@ -120,11 +139,11 @@ def prepare_fit_embeddings(
         idx_start_sample=0,
         max_samples=len(id_fit_dataset),
         output_path=output_path,
-        build_prompt_fn=build_prompt,
+        build_prompt_fn=build_prompt_fn,
         get_layer_output_fn=get_layer_output,
-        layer_idx=-1,
-        extract_token_activations_fn=extract_last_token_activations,
-        offset=-5
+        layer_idx=layer_idx,
+        extract_token_activations_fn=extract_token_activations_fn,
+        **kwargs  # Passes start_offset, end_offset, etc. to extract_token_activations_fn
     )
     t1 = time.time()
     print("...end!")
@@ -141,7 +160,11 @@ def prepare_test_embeddings(
     id_output_path: str = OUTPUT_DIR + "id_test_results.pkl",
     od_output_path: str = OUTPUT_DIR + "od_test_results.pkl",
     shuffle: bool = False,
-    select_slice: Optional[Tuple[int, int]]  = None
+    select_slice: Optional[Tuple[int, int]]  = None,
+    layer_idx: int = -1,
+    build_prompt_fn: Callable = None,
+    extract_token_activations_fn: Callable = None,
+    **kwargs 
 ) -> None:
     """
     Extract and save embeddings for the in-distribution (ID) and 
@@ -163,7 +186,16 @@ def prepare_test_embeddings(
         If true the dataset if shuffled with seed. 
     select_slice : Optional[Tuple[int, int]]
         (start, end) indices for slicing the dataset.
+    layer_idx : int
+        Index of the transformer layer to extract activations from.
+    build_prompt_fn : callable
+        Function to build a prompt from context and question.
+    extract_token_activations_fn : callable
+        Function to extract token activations from a model layer.
+    **kwargs :
+        Extra keyword arguments passed to extract_token_activations_fn (e.g., start_offset, end_offset).
     """
+    
     # Seed everything
     seed_all(seed)
 
@@ -205,11 +237,11 @@ def prepare_test_embeddings(
         max_samples=len(od_test_dataset),
         save_to_pkl=True,
         output_path=od_output_path,
-        build_prompt_fn=build_prompt,
+        build_prompt_fn=build_prompt_fn,
         get_layer_output_fn=get_layer_output,
-        layer_idx=-1,
-        extract_token_activations_fn=extract_last_token_activations,
-        offset=-5,
+        layer_idx=layer_idx,
+        extract_token_activations_fn=extract_token_activations_fn,
+        **kwargs  # Passes start_offset, end_offset, etc. to extract_token_activations_fn
     )
     t3 = time.time()
     print("...end!")
@@ -227,11 +259,11 @@ def prepare_test_embeddings(
         max_samples=len(id_test_dataset),
         save_to_pkl=True,
         output_path=id_output_path,
-        build_prompt_fn=build_prompt,
+        build_prompt_fn=build_prompt_fn,
         get_layer_output_fn=get_layer_output,
-        layer_idx=-1,
-        extract_token_activations_fn=extract_last_token_activations,
-        offset=-5,
+        layer_idx=layer_idx,
+        extract_token_activations_fn=extract_token_activations_fn,
+        **kwargs  # Passes start_offset, end_offset, etc. to extract_token_activations_fn
     )
     t5 = time.time()
     print("end!")
@@ -242,12 +274,44 @@ def prepare_test_embeddings(
     del id_test_dataset
 
 
+
+
 def main() -> None:
     """
     Main entry point for the embedding extraction pipeline.
     """
-    prepare_fit_embeddings(shuffle=True, select_slice=(0,100))
-    prepare_test_embeddings(shuffle=True, select_slice=(0,100))
+    '''
+    prepare_fit_embeddings(
+        model_name=MODEL_NAME,
+        batch_size=BATCH_SIZE,
+        seed=SEED,
+        output_path=OUTPUT_DIR + "id_fit_results_layer16_tokenAvg.pkl",
+        shuffle=True,
+        select_slice=(0,10000),
+        layer_idx=16,
+        build_prompt_fn=build_impossible_prompt,
+        extract_token_activations_fn=extract_average_token_activations,
+        start_offset=5,
+        end_offset=-5 
+    )  
+    '''
+    clear_cache()
+
+    prepare_test_embeddings(
+        model_name=MODEL_NAME,
+        batch_size=BATCH_SIZE,
+        seed=SEED,
+        id_output_path=OUTPUT_DIR + "id_test_results_layer16_tokenAvg.pkl",
+        od_output_path=OUTPUT_DIR + "od_test_results_layer16_tokenAvg.pkl",
+        shuffle=True,
+        select_slice=(0,1000),
+        layer_idx=16,
+        build_prompt_fn=build_impossible_prompt,
+        extract_token_activations_fn=extract_average_token_activations,
+        start_offset=5,
+        end_offset=-5 
+    ) 
+    
 
 
 if __name__ == "__main__":
