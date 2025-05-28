@@ -35,6 +35,9 @@ sys.path.append(project_root)
 # ====================================
 from typing import Optional, Tuple, Callable
 import time
+import pickle
+from transformers import PreTrainedTokenizer, PreTrainedModel
+from datasets import  Dataset
 from src.utils.general import seed_all, print_time_elapsed
 from src.model_loader.llama_loader import load_llama
 from src.data_reader.squad_loader import (
@@ -45,76 +48,48 @@ from src.data_reader.squad_loader import (
 from src.inference.inference_utils import (
     batch_extract_token_activations_with_generation, 
     batch_extract_token_activations, 
-    build_prompt, 
-    build_impossible_prompt,
+    build_prompt,
     get_layer_output, 
     extract_last_token_activations, 
     extract_average_token_activations,
+    extract_max_token_activations
 )
 
+from src.data_reader.pickle_io import load_pickle_batches
+from src.utils.general import filter_correct_entries
 # ====================================
-# Global variables  
-# ====================================
-SEED = 44
-BATCH_SIZE = 16
-MODEL_NAME =  "meta-llama/Llama-2-7b-chat-hf"
-OUTPUT_DIR = "../results/raw/"
-
-
-# ====================================
-# Mains funtions 
+#  Define funtions 
 # ====================================
 def clear_cache():
     torch.cuda.empty_cache()
     torch.cuda.ipc_collect()
 
-def prepare_fit_embeddings(
-    model_name: str = MODEL_NAME,
-    batch_size: int = BATCH_SIZE,
-    seed: int = SEED,
-    output_path: str = OUTPUT_DIR + "id_fit_results.pkl",
+
+def prepare_fit_dataset(
+    seed: int = 44,
     shuffle: bool = False,
     select_slice: Optional[Tuple[int, int]]  = None,
-    layer_idx: int = -1,
-    build_prompt_fn: Callable = None,
-    extract_token_activations_fn: Callable = None,
-    **kwargs 
-) -> None:
+) -> Dataset:
     """
     Extract and save embeddings for the in-distribution (ID) training set.
 
     Parameters
     ----------
-    model_name : str
-        Name or path of the pretrained Llama model to load.
-    batch_size : int
-        Number of samples per batch for inference.
     seed : int
         Random seed for reproducibility.
-    output_path : str
-        Path to save the extracted embeddings as a pickle file.
     shuffle : bool
         If true the dataset if shuffled with seed. 
     select_slice : Optional[Tuple[int, int]]
-        (start, end) indices for slicing the dataset.
-    layer_idx : int
-        Index of the transformer layer to extract activations from.
-    build_prompt_fn : callable
-        Function to build a prompt from context and question.
-    extract_token_activations_fn : callable
-        Function to extract token activations from a model layer.
-    **kwargs :
-        Extra keyword arguments passed to extract_token_activations_fn (e.g., start_offset, end_offset).
+        (start, end) indices for slicing the dataset. 
+
+    Returns
+    -------
+    id_fit_dataset : Dataset
+        Hugging Face dataset containing ID fit data. 
     """
-    # Seed everything
-    seed_all(seed)
-
-    # Load model
-    model, tokenizer = load_llama(model_name)
-
     # Load ID dataset
     id_fit_dataset = load_id_fit_dataset()
-
+    
     # Shuffle if needed 
     if shuffle:
         print("Shuffle dataset")
@@ -127,81 +102,36 @@ def prepare_fit_embeddings(
         ):
         print(f"Select dataset slice: {select_slice}")
         id_fit_dataset = id_fit_dataset.slice(idx_start=select_slice[0], idx_end=select_slice[1])
-
-    # Retrieve ID embeddings and save results
-    print("\nStart retrieving ID embeddings...")
-    t0 = time.time()
-    batch_extract_token_activations_with_generation(
-        model=model,
-        tokenizer=tokenizer,
-        dataset=id_fit_dataset,
-        batch_size=batch_size,
-        idx_start_sample=0,
-        max_samples=len(id_fit_dataset),
-        output_path=output_path,
-        build_prompt_fn=build_prompt_fn,
-        get_layer_output_fn=get_layer_output,
-        layer_idx=layer_idx,
-        extract_token_activations_fn=extract_token_activations_fn,
-        **kwargs  # Passes start_offset, end_offset, etc. to extract_token_activations_fn
-    )
-    t1 = time.time()
-    print("...end!")
-    print_time_elapsed(t0, t1, label="ID embeddings: ")
-
-    # Free memory
-    del id_fit_dataset
+    
+    return id_fit_dataset
 
 
-def prepare_test_embeddings(
-    model_name: str = MODEL_NAME,
-    batch_size: int = BATCH_SIZE,
-    seed: int = SEED,
-    id_output_path: str = OUTPUT_DIR + "id_test_results.pkl",
-    od_output_path: str = OUTPUT_DIR + "od_test_results.pkl",
+def prepare_test_dataset(
+    seed: int = 44,
     shuffle: bool = False,
     select_slice: Optional[Tuple[int, int]]  = None,
-    layer_idx: int = -1,
-    build_prompt_fn: Callable = None,
-    extract_token_activations_fn: Callable = None,
-    **kwargs 
-) -> None:
+) -> Dataset:
     """
-    Extract and save embeddings for the in-distribution (ID) and 
-    out-of-distribution (OOD) test sets.
+    Extract and save embeddings for the in-distribution (ID) training set.
 
     Parameters
     ----------
-    model_name : str
-        Name or path of the pretrained Llama model to load.
-    batch_size : int
-        Number of samples per batch for inference.
     seed : int
         Random seed for reproducibility.
-    id_output_path : str
-        Path to save the ID test embeddings as a pickle file.
-    od_output_path : str
-        Path to save the OOD test embeddings as a pickle file.
     shuffle : bool
         If true the dataset if shuffled with seed. 
     select_slice : Optional[Tuple[int, int]]
         (start, end) indices for slicing the dataset.
-    layer_idx : int
-        Index of the transformer layer to extract activations from.
-    build_prompt_fn : callable
-        Function to build a prompt from context and question.
-    extract_token_activations_fn : callable
-        Function to extract token activations from a model layer.
-    **kwargs :
-        Extra keyword arguments passed to extract_token_activations_fn (e.g., start_offset, end_offset).
+    custom_dataset_path : str
+        Path to a custom dataset to extract token embeddings. 
+
+    Returns
+    -------
+    id_test_dataset : Dataset
+        Hugging Face dataset containing ID test data. 
+    od_test_dataset : Dataset
+        Hugging Face dataset containing OOD test data. 
     """
-    
-    # Seed everything
-    seed_all(seed)
-
-    # Load model
-    model, tokenizer = load_llama(model_name)
-
     # Load  ID test dataset
     id_test_dataset = load_id_test_dataset()
 
@@ -223,9 +153,248 @@ def prepare_test_embeddings(
         print(f"Select dataset slice: {select_slice}")
         id_test_dataset = id_test_dataset.slice(idx_start=select_slice[0], idx_end=select_slice[1])
         od_test_dataset = od_test_dataset.slice(idx_start=select_slice[0], idx_end=select_slice[1])
+    
+    return id_test_dataset, od_test_dataset
 
+
+def generate_and_filter_correct_answers(
+    model_name: str,
+    seed: int,
+    output_path: str,
+    save_dataset_path: str,
+    shuffle: bool = False,
+    select_slice: Optional[Tuple[int, int]]  = None,
+    batch_size: int = 16,
+    build_prompt_fn: Callable = None,
+) -> None:
+    """
+    Generate model answers for a dataset, compare them to ground-truth, and filter to keep only correct responses.
+
+    This function runs batched inference to generate answers with a decoder-only language model,
+    compares generated responses to ground-truth answers using semantic similarity metrics,
+    and saves only the dataset entries where the generated answer is considered correct.
+
+    Parameters
+    ----------
+    model_name : str
+        Name or path of the pretrained Llama model to load.
+    seed : int
+        Random seed for reproducibility.
+    output_path : str
+        Path to save the extracted answers as a pickle file.
+    save_dataset_path : str
+        Path to save the new created dataset containing only correct answers.
+    shuffle : bool
+        If true the dataset if shuffled with seed. 
+    select_slice : Optional[Tuple[int, int]]
+        (start, end) indices for slicing the dataset.
+    batch_size : int
+        Number of samples per batch for inference.
+    build_prompt_fn : callable
+        Function to build a prompt from context and question.
+    """   
+
+    # Seed everything
+    # -----------------------------------
+    seed_all(seed)
+
+    # Load model
+    # -----------------------------------
+    model, tokenizer = load_llama(model_name)
+
+    # Load ID dataset
+    # -----------------------------------
+    id_fit_dataset = prepare_fit_dataset(seed, shuffle, select_slice)
+
+    # Retrieve ID generated responses and compare them to ground-truth 
+    # -----------------------------------
+    print("\nStart generating ID answers and comparing them to ground-truth...")
+    t0 = time.time()
+    batch_extract_token_activations_with_generation(
+        model=model,
+        tokenizer=tokenizer,
+        dataset=id_fit_dataset,
+        batch_size=batch_size,
+        idx_start_sample=0,
+        max_samples=len(id_fit_dataset),
+        output_path = output_path, 
+        build_prompt_fn=build_prompt_fn,
+        get_layer_output_fn=None,          # <--- Do not extract token embeddings
+        layer_idx=-1,                      # <--- Do not extract token embeddings
+        extract_token_activations_fn=None, # <--- Do not extract token embeddings
+        start_offset=0,                    # <--- Do not extract token embeddings
+        end_offset=0                       # <--- Do not extract token embeddings
+    )
+    t1 = time.time()
+    print("...end!")
+    print_time_elapsed(t0, t1, label="ID answers: ")
+
+    # Load ID responses and only keep correct entries 
+    # -----------------------------------
+    # Load extracted answers 
+    id_fit_answers = load_pickle_batches(output_path)
+    # Only keep rows where the generated responses are similar to the ground-truth answers
+    ids_correct_answers = filter_correct_entries(id_fit_answers)["id"]
+    # Create a new dataset contaning only the correct answers 
+    id_fit_correct_dataset =  id_fit_dataset.filter_by_column('id', ids_correct_answers)
+    # Save the new correct dataset for later use
+    id_fit_correct_dataset.save(save_dataset_path) 
+
+
+def retrieve_fit_embeddings(
+    model_name: str,
+    seed: int,
+    output_path: str,
+    custom_dataset_path: str = None,
+    shuffle: bool = False,
+    select_slice: Optional[Tuple[int, int]]  = None,
+    batch_size: int = 16,
+    build_prompt_fn: Callable = None,
+    layer_idx: int = -1,
+    extract_token_activations_fn: Callable = None,
+    start_offset: int = 0,
+    end_offset: int = 0
+) -> None:
+    """
+    Extract and save embeddings for the in-distribution (ID) training set.
+
+    Parameters
+    ----------
+    model_name : str
+        Name or path of the pretrained Llama model to load.
+    seed : int
+        Random seed for reproducibility.
+    output_path : str
+        Path to save the extracted embeddings as a pickle file.
+    custom_dataset_path : str
+        Path to a custom dataset to extract token embeddings. 
+        If None, the default dataset is loaded with prepare_fit_dataset() 
+    shuffle : bool
+        If true the dataset if shuffled with seed. 
+    select_slice : Optional[Tuple[int, int]]
+        (start, end) indices for slicing the dataset.
+    batch_size : int
+        Number of samples per batch for inference.
+    build_prompt_fn : callable
+        Function to build a prompt from context and question.
+    layer_idx : int
+        Index of the transformer layer to extract activations from.
+    extract_token_activations_fn : callable
+        Function to extract token activations from a model layer.
+    start_offset : int
+        Number of tokens to skip from the beginning of the sequence when extracting token 
+        activations with extract_token_activations_fn.
+    end_offset : int
+        The number of tokens to skip from the end of the sequence when extracting token
+        activations with extract_token_activations_fn.
+    """  
+
+    # Seed everything
+    # -----------------------------------
+    seed_all(seed)
+
+    # Load model
+    # -----------------------------------
+    model, tokenizer = load_llama(model_name)
+
+    # Load ID dataset
+    # -----------------------------------
+    if custom_dataset_path:
+        with open(custom_dataset_path, "rb") as f:
+            id_fit_dataset = pickle.load(f)
+        print(f"loaded dataset from {custom_dataset_path}")
+    else:
+        id_fit_dataset = prepare_fit_dataset(seed, shuffle, select_slice)
+
+    # Retrieve ID embeddings and save results
+    # -----------------------------------
+    print("\nStart retrieving ID embeddings...")
+    t0 = time.time()
+    batch_extract_token_activations(
+        model=model,
+        tokenizer=tokenizer,
+        dataset=id_fit_dataset,
+        batch_size=batch_size,
+        idx_start_sample=0,
+        max_samples=len(id_fit_dataset),
+        save_to_pkl=True,
+        output_path=output_path,
+        build_prompt_fn=build_prompt_fn,
+        get_layer_output_fn=get_layer_output,
+        layer_idx=layer_idx,
+        extract_token_activations_fn=extract_token_activations_fn,
+        start_offset=start_offset,
+        end_offset=end_offset
+    )
+    t1 = time.time()
+    print("...end!")
+    print_time_elapsed(t0, t1, label="ID embeddings: ")
+
+    # Free memory
+    del id_fit_dataset
+
+
+def retrieve_test_embeddings(
+    model_name: str,
+    seed: int,
+    id_output_path: str,
+    od_output_path: str,
+    shuffle: bool = False,
+    select_slice: Optional[Tuple[int, int]]  = None,
+    batch_size: int = 16,
+    build_prompt_fn: Callable = None,
+    layer_idx: int = -1,
+    extract_token_activations_fn: Callable = None,
+    start_offset: int = 0,
+    end_offset: int = 0
+) -> None:
+    """
+    Extract and save embeddings for the in-distribution (ID) and 
+    out-of-distribution (OOD) test sets.
+
+    Parameters
+    ----------
+    model_name : str
+        Name or path of the pretrained Llama model to load.
+    id_output_path : str
+        Path to save the ID test embeddings as a pickle file.
+    od_output_path : str
+        Path to save the OOD test embeddings as a pickle file.
+    seed : int
+        Random seed for reproducibility.
+    shuffle : bool
+        If true the dataset if shuffled with seed. 
+    select_slice : Optional[Tuple[int, int]]
+        (start, end) indices for slicing the dataset.
+    batch_size : int
+        Number of samples per batch for inference.
+    build_prompt_fn : callable
+        Function to build a prompt from context and question.
+    layer_idx : int
+        Index of the transformer layer to extract activations from.
+    extract_token_activations_fn : callable
+        Function to extract token activations from a model layer.
+    start_offset : int
+        Number of tokens to skip from the beginning of the sequence when extracting token 
+        activations with extract_token_activations_fn.
+    end_offset : int
+        The number of tokens to skip from the end of the sequence when extracting token
+        activations with extract_token_activations_fn.
+    """  
+    # Seed everything
+    # -----------------------------------
+    seed_all(seed)
+
+    # Load model
+    # -----------------------------------
+    model, tokenizer = load_llama(model_name)
+
+    # Load ID and OOD test dataset
+    # -----------------------------------
+    id_test_dataset, od_test_dataset = prepare_test_dataset(seed, shuffle, select_slice)
 
     # Retrieve test embeddings and save results 
+    # -----------------------------------
     print("\nStart retrieving test impossible embeddings...")
     t2 = time.time()
     batch_extract_token_activations(
@@ -241,7 +410,8 @@ def prepare_test_embeddings(
         get_layer_output_fn=get_layer_output,
         layer_idx=layer_idx,
         extract_token_activations_fn=extract_token_activations_fn,
-        **kwargs  # Passes start_offset, end_offset, etc. to extract_token_activations_fn
+        start_offset=start_offset,
+        end_offset=end_offset
     )
     t3 = time.time()
     print("...end!")
@@ -263,7 +433,8 @@ def prepare_test_embeddings(
         get_layer_output_fn=get_layer_output,
         layer_idx=layer_idx,
         extract_token_activations_fn=extract_token_activations_fn,
-        **kwargs  # Passes start_offset, end_offset, etc. to extract_token_activations_fn
+        start_offset=start_offset,
+        end_offset=end_offset
     )
     t5 = time.time()
     print("end!")
@@ -275,43 +446,89 @@ def prepare_test_embeddings(
 
 
 
+# ====================================
+# Global variables  
+# ====================================
+SEED = 44
+BATCH_SIZE = 16 #32
+MODEL_NAME = "meta-llama/Llama-2-7b-chat-hf"
+OUTPUT_DIR = "../results/raw/"
+PLOT_DIR   = "../results/figures/"
+START_OFFSET= 0 #40
+END_OFFSET= 0   #-4
 
+
+LAYER_LIST = [-1, 16]  # integer
+TOKENS_LIST = ["-1", "Avg", "Max"]  # string
+
+# ====================================
+# Main function 
+# ====================================
 def main() -> None:
     """
     Main entry point for the embedding extraction pipeline.
     """
-    '''
-    prepare_fit_embeddings(
-        model_name=MODEL_NAME,
-        batch_size=BATCH_SIZE,
-        seed=SEED,
-        output_path=OUTPUT_DIR + "id_fit_results_layer16_tokenAvg.pkl",
-        shuffle=True,
-        select_slice=(0,10000),
-        layer_idx=16,
-        build_prompt_fn=build_impossible_prompt,
-        extract_token_activations_fn=extract_average_token_activations,
-        start_offset=5,
-        end_offset=-5 
-    )  
-    '''
-    clear_cache()
+    for LAYER in LAYER_LIST:
+        for TOKENS in TOKENS_LIST:
 
-    prepare_test_embeddings(
-        model_name=MODEL_NAME,
-        batch_size=BATCH_SIZE,
-        seed=SEED,
-        id_output_path=OUTPUT_DIR + "id_test_results_layer16_tokenAvg.pkl",
-        od_output_path=OUTPUT_DIR + "od_test_results_layer16_tokenAvg.pkl",
-        shuffle=True,
-        select_slice=(0,1000),
-        layer_idx=16,
-        build_prompt_fn=build_impossible_prompt,
-        extract_token_activations_fn=extract_average_token_activations,
-        start_offset=5,
-        end_offset=-5 
-    ) 
-    
+            # Select function to extract token embeddings
+            if TOKENS=="-1":
+                EXTRACT_TOKEN_ACTIVATIONS = extract_last_token_activations
+            elif TOKENS=="Avg":
+                EXTRACT_TOKEN_ACTIVATIONS = extract_average_token_activations
+            elif TOKENS=="Max":
+                EXTRACT_TOKEN_ACTIVATIONS = extract_max_token_activations
+
+            output_title = f"_layer{LAYER}_token{TOKENS}_so{START_OFFSET}_eo{END_OFFSET}.pkl"
+            print(f"\n\n=================Processing {output_title}=================")
+
+            if False:
+                clear_cache()
+                generate_and_filter_correct_answers(
+                    model_name=MODEL_NAME,
+                    seed=SEED,
+                    output_path=OUTPUT_DIR + f"id_fit_results_answers.pkl",
+                    save_dataset_path="../data/datasets/id_fit_correct_dataset.pkl",
+                    shuffle=True,
+                    select_slice=(0,10_000),
+                    batch_size=BATCH_SIZE,
+                    build_prompt_fn=build_prompt
+                )
+
+            if True:
+                clear_cache()
+                retrieve_fit_embeddings(
+                    model_name=MODEL_NAME,
+                    seed=SEED,
+                    output_path=OUTPUT_DIR + "id_fit_results" + output_title,
+                    custom_dataset_path="../data/datasets/id_fit_correct_dataset.pkl",
+                    shuffle=True,
+                    select_slice=(0,10_000),
+                    batch_size=BATCH_SIZE,
+                    build_prompt_fn=build_prompt,
+                    layer_idx=LAYER,
+                    extract_token_activations_fn=EXTRACT_TOKEN_ACTIVATIONS,
+                    start_offset=START_OFFSET,
+                    end_offset=END_OFFSET
+                )
+
+
+            if True:
+                clear_cache()
+                retrieve_test_embeddings(
+                    model_name=MODEL_NAME,
+                    seed=SEED,
+                    id_output_path=OUTPUT_DIR + "id_test_results" + output_title,
+                    od_output_path=OUTPUT_DIR + "od_test_results" + output_title,
+                    shuffle=True,
+                    select_slice=(0,1000),
+                    batch_size=BATCH_SIZE,
+                    build_prompt_fn=build_prompt,
+                    layer_idx=LAYER,
+                    extract_token_activations_fn=EXTRACT_TOKEN_ACTIVATIONS,
+                    start_offset=START_OFFSET,
+                    end_offset=END_OFFSET
+                )
 
 
 if __name__ == "__main__":
