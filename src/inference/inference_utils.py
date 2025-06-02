@@ -818,3 +818,138 @@ def batch_extract_token_activations(
 
 
 
+def batch_extract_answer_token_activations(
+    model: PreTrainedModel,
+    tokenizer: PreTrainedTokenizer,
+    dataset: Dataset,
+    batch_size: int = 4,
+    idx_start_sample: int = 0,
+    max_samples: int = 1000,
+    save_to_pkl: bool = False,
+    output_path: str = "outputs/all_batch_results.pkl",
+    build_prompt_fn: Callable[[str, str], str] = None,
+    get_layer_output_fn: Callable = None,
+    layer_idx: int = -1,  
+    extract_token_activations_fn: Callable = None, 
+    include_prompt: bool = True,
+    **kwargs
+):
+    """
+    Runs batched inference on a dataset using a decoder-only language model.
+    For each batch, generates answers, extracts token-level activations for the generated answer,
+    and appends the results to a pickle file.
+
+    Parameters
+    ----------
+    model : PreTrainedModel
+        The causal language model to evaluate (e.g., LLaMA).
+    tokenizer : PreTrainedTokenizer
+        The corresponding tokenizer.
+    dataset : Dataset
+        The input dataset.
+    batch_size : int
+        Number of samples per batch.
+    idx_start_sample : int
+        Index of the first sample to process from the dataset.
+    max_samples : int
+        Total number of examples to process from the dataset, starting from idx_start_sample. 
+    save_to_pkl : bool
+        If True, activations are appended to the pickle file at output_path.
+        If False, the function returns a list of activations.
+    output_path : str
+        Path to the pickle file for saving intermediate results.
+    build_prompt_fn : Callable
+        Function to build a prompt from context and question.
+    get_layer_output_fn : Callable
+        Function to extract the output of a specific model layer. 
+    layer_idx : int
+        Index of the transformer layer to extract activations from (default: -1 for last layer).
+    extract_token_activations_fn : Callable
+        Function to extract token activations from a model layer (default is average).
+    include_prompt : bool
+        Whether to include the prompt in the embedding extraction.
+        *Note:* Tokenization will always include the prompt.  
+    **kwargs :
+        Extra keyword arguments passed to extract_token_activations_fn, including start_offset.
+    """    
+    batch_activations = []  # Chosen token activation vectors
+
+    for i in tqdm(range(idx_start_sample, idx_start_sample + max_samples, batch_size)):
+        batch_answers = []   # Generated answers
+ 
+        # Extract a batch from the dataset
+        batch = extract_batch(dataset, i, batch_size)
+        prompts = [build_prompt_fn(s["context"], s["question"]) for s in batch]
+
+        # Tokenize the prompt 
+        inputs = tokenizer(prompts, padding=True, truncation=True, return_tensors="pt").to(model.device)
+        
+        # Compute the number of non-padding tokens in each prompt (true prompt length)
+        prompt_non_pad_len = inputs["attention_mask"].sum(dim=1).tolist()  # Shape (batch_size,)
+
+        # Generate the answers for the batch
+        output_ids = generate_answers(model, inputs, tokenizer)
+
+        # Build full sequences (prompt + generated answer) for each sample in the batch
+        full_sequences = []
+        for j in range(len(prompts)):
+            # --- Total length of the tokenized prompt, padding included ---
+            prompt_len = len(inputs["input_ids"][j])  # Length of the prompt for example j
+            # --- Decode token IDs into text ---
+            generated_answer_ids = output_ids[j][prompt_len:]  # Remove prompt part
+            generated_answer = tokenizer.decode(generated_answer_ids, skip_special_tokens=True).strip()
+            # --- Decode the prompt tokens to text ---
+            prompt_text = tokenizer.decode(inputs["input_ids"][j], skip_special_tokens=True)
+            # --- Combine prompt and answer for full sequence ---
+            full_sequences.append(prompt_text + generated_answer)
+            # --- Store generated answers ---
+            batch_answers.append(generated_answer)
+
+        # Tokenize the full sequences (prompt + answer) again, with padding and truncation
+        # We need to retokenize and cannot directly use `output_ids` since we need attention_mask for get_layer_output_fn
+        full_inputs = tokenizer(full_sequences, padding=True, truncation=True, return_tensors="pt").to(model.device)
+
+        # Extract activations from the specified model layer for all sequences in the batch
+        selected_layer = get_layer_output_fn(model, full_inputs, layer_idx)
+
+        # Compute the start offsets for activation extraction
+        if include_prompt:
+            # --- If include_prompt is True, use the value from kwargs (or zeros if not provided) ---
+            start_offsets = kwargs.get("start_offset", torch.zeros(len(prompts), device=selected_layer.device)) # Shape (batch_size,) 
+        else:
+            # --- If include_prompt is False, use the true prompt length (non-padding tokens) ---
+            start_offsets = torch.tensor(prompt_non_pad_len, device=selected_layer.device)  # Shape (batch_size,) 
+
+        # Remove start_offset from kwargs to avoid passing it twice to the extraction function
+        kwargs.pop("start_offset", None)
+
+        # Call the specified activation extraction function
+        selected_token_vecs, target_indices = extract_token_activations_fn(
+            selected_layer,
+            full_inputs["attention_mask"],
+            device=selected_layer.device,
+            start_offset=start_offsets,  # Shape (batch_size,) 
+            **kwargs
+        )
+        
+        # --- Store everything ---
+        batch_dataset_ids = [s['id'] for s in batch]  # 'id' field from dataset
+        batch_dataset_original_idx = [s['original_index'] for s in batch] # Original indices from dataset
+        activations = [selected_token_vecs[j].unsqueeze(0).cpu() for j in range(selected_token_vecs.size(0))] # Embeddings of generated answers
+
+       
+        # --- Save progress to pickle after each batch ---
+        batch_results = {
+            "id": batch_dataset_ids,
+            "original_indices": batch_dataset_original_idx,
+            "gen_answers": batch_answers,
+            "activations": activations
+        }
+
+        if save_to_pkl:
+            append_to_pickle(output_path, batch_results)
+        else:
+            batch_activations.extend(activations)
+        
+    if not save_to_pkl:
+        return batch_activations
