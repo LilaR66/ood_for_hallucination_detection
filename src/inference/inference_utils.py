@@ -277,6 +277,8 @@ def extract_last_token_activations(
 
     # Compute the target index using the offset
     target_indices = last_indices + end_offset #+1
+    # Convert indices to integer type
+    target_indices = target_indices.to(torch.long)  
     batch_indices = torch.arange(selected_layer.size(0), device=device)
     # Extract the activations at the target indices
     return selected_layer[batch_indices, target_indices]
@@ -867,7 +869,11 @@ def batch_extract_answer_token_activations(
     extract_token_activations_fn : Callable
         Function to extract token activations from a model layer (default is average).
     include_prompt : bool
-        Whether to include the prompt in the embedding extraction.
+        Whether to include the prompt in the embedding extraction. 
+        - If include_prompt=False: 
+            start_offset is set to prompt length and end_offset is set to 0.
+        - If include_prompt=True: 
+            uses start_offset and end_offset specified in **kwargs (defaults to 0).
         *Note:* Tokenization will always include the prompt.  
     **kwargs :
         Extra keyword arguments passed to extract_token_activations_fn, including start_offset.
@@ -915,20 +921,24 @@ def batch_extract_answer_token_activations(
         # Compute the start offsets for activation extraction
         if include_prompt:
             # --- If include_prompt is True, use the value from kwargs (or zeros if not provided) ---
-            start_offsets = kwargs.get("start_offset", torch.zeros(len(prompts), device=selected_layer.device)) # Shape (batch_size,) 
+            start_offsets = kwargs.get("start_offset", torch.zeros(len(prompts), device=selected_layer.device)) # Shape (batch_size,)
+            end_offsets = kwargs.get("end_offset", torch.zeros(len(prompts), device=selected_layer.device)) # Shape (batch_size,) 
         else:
-            # --- If include_prompt is False, use the true prompt length (non-padding tokens) ---
+            # --- If include_prompt is False, use the true prompt length (non-padding tokens) and end_offset=0 ---
             start_offsets = torch.tensor(prompt_non_pad_len, device=selected_layer.device)  # Shape (batch_size,) 
+            end_offsets = torch.zeros(len(prompts), device=selected_layer.device) # Shape (batch_size,) 
 
-        # Remove start_offset from kwargs to avoid passing it twice to the extraction function
+        # Remove from kwargs to avoid passing it twice to the extraction function
         kwargs.pop("start_offset", None)
+        kwargs.pop("end_offset", None)
 
         # Call the specified activation extraction function
-        selected_token_vecs, target_indices = extract_token_activations_fn(
+        selected_token_vecs = extract_token_activations_fn(
             selected_layer,
             full_inputs["attention_mask"],
             device=selected_layer.device,
             start_offset=start_offsets,  # Shape (batch_size,) 
+            end_offset=end_offsets,     # Shape (batch_size,) 
             **kwargs
         )
         

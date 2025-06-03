@@ -48,6 +48,7 @@ from src.data_reader.squad_loader import (
 from src.inference.inference_utils import (
     batch_extract_token_activations_with_generation, 
     batch_extract_token_activations, 
+    batch_extract_answer_token_activations,
     build_prompt,
     get_layer_output, 
     extract_last_token_activations, 
@@ -241,7 +242,7 @@ def generate_and_filter_correct_answers(
     id_fit_correct_dataset.save(save_dataset_path) 
 
 
-def retrieve_fit_embeddings(
+def retrieve_fit_inputs_embeddings(
     model_name: str,
     seed: int,
     output_path: str,
@@ -308,7 +309,7 @@ def retrieve_fit_embeddings(
 
     # Retrieve ID embeddings and save results
     # -----------------------------------
-    print("\nStart retrieving ID embeddings...")
+    print("\nStart retrieving ID embeddings from inputs...")
     t0 = time.time()
     batch_extract_token_activations(
         model=model,
@@ -334,7 +335,7 @@ def retrieve_fit_embeddings(
     del id_fit_dataset
 
 
-def retrieve_test_embeddings(
+def retrieve_test_inputs_embeddings(
     model_name: str,
     seed: int,
     id_output_path: str,
@@ -395,7 +396,8 @@ def retrieve_test_embeddings(
 
     # Retrieve test embeddings and save results 
     # -----------------------------------
-    print("\nStart retrieving test impossible embeddings...")
+    # Extract OOD test embeddings
+    print("\nStart retrieving test impossible embeddings from inputs...")
     t2 = time.time()
     batch_extract_token_activations(
         model=model,
@@ -418,7 +420,7 @@ def retrieve_test_embeddings(
     print_time_elapsed(t2, t3, label="Impossible test embeddings: ")
 
     # Extract ID test embeddings
-    print("\nStart retrieving test possible embeddings...")
+    print("\nStart retrieving test possible embeddings from inputs...")
     t4 = time.time()
     batch_extract_token_activations(
         model=model,
@@ -445,6 +447,228 @@ def retrieve_test_embeddings(
     del id_test_dataset
 
 
+def retrieve_fit_answers_embeddings(
+    model_name: str,
+    seed: int,
+    output_path: str,
+    custom_dataset_path: str = None,
+    shuffle: bool = False,
+    select_slice: Optional[Tuple[int, int]]  = None,
+    batch_size: int = 16,
+    build_prompt_fn: Callable = None,
+    layer_idx: int = -1,
+    extract_token_activations_fn: Callable = None,
+    start_offset: int = 0,
+    end_offset: int = 0,
+    include_prompt: bool = True,
+) -> None:
+    """
+    Extract and save embeddings for the in-distribution (ID) training 
+    set of the generated answers.
+
+    Parameters
+    ----------
+    model_name : str
+        Name or path of the pretrained Llama model to load.
+    seed : int
+        Random seed for reproducibility.
+    output_path : str
+        Path to save the extracted embeddings as a pickle file.
+    custom_dataset_path : str
+        Path to a custom dataset to extract token embeddings. 
+        If None, the default dataset is loaded.
+    shuffle : bool
+        If true, the dataset will be shuffled with the given seed.
+    select_slice : Optional[Tuple[int, int]]
+        (start, end) indices for slicing the dataset.
+    batch_size : int
+        Number of samples per batch for inference.
+    build_prompt_fn : callable
+        Function to build a prompt from context and question.
+    layer_idx : int
+        Index of the transformer layer to extract activations from.
+    extract_token_activations_fn : callable
+        Function to extract token activations from a model layer.
+    start_offset : int
+        Number of tokens to skip from the beginning of the sequence when extracting token activations.
+    end_offset : int
+        The number of tokens to skip from the end of the sequence when extracting token activations.
+    include_prompt : bool
+        Whether to include the prompt in the embedding extraction.
+        - If include_prompt=False: 
+            start_offset is set to prompt length and end_offset is set to 0.
+        - If include_prompt=True: 
+            uses start_offset and end_offset specified in the args.
+        *Note:* Tokenization will always include the prompt.  
+    """
+
+    # Seed everything
+    # -----------------------------------
+    seed_all(seed)
+
+    # Load model
+    # -----------------------------------
+    model, tokenizer = load_llama(model_name)
+
+    # Load ID dataset
+    # -----------------------------------
+    if custom_dataset_path:
+        with open(custom_dataset_path, "rb") as f:
+            id_fit_dataset = pickle.load(f)
+        print(f"loaded dataset from {custom_dataset_path}")
+    else:
+        id_fit_dataset = prepare_fit_dataset(seed, shuffle, select_slice)
+
+    # Retrieve ID embeddings and save results
+    # -----------------------------------
+    print("\nStart retrieving ID embeddings from generated answers...")
+    t0 = time.time()
+    batch_extract_answer_token_activations(
+        model=model,
+        tokenizer=tokenizer,
+        dataset=id_fit_dataset,
+        batch_size=batch_size,
+        idx_start_sample=0,
+        max_samples=len(id_fit_dataset),
+        save_to_pkl=True,
+        output_path=output_path,
+        build_prompt_fn=build_prompt_fn,
+        get_layer_output_fn=get_layer_output,
+        layer_idx=layer_idx,
+        extract_token_activations_fn=extract_token_activations_fn,
+        include_prompt=include_prompt,
+        start_offset=start_offset,
+        end_offset=end_offset
+    )
+    t1 = time.time()
+    print("...end!")
+    print_time_elapsed(t0, t1, label="ID embeddings: ")
+
+    # Free memory
+    del id_fit_dataset
+
+
+def retrieve_test_answers_embeddings(
+    model_name: str,
+    seed: int,
+    id_output_path: str,
+    od_output_path: str,
+    shuffle: bool = False,
+    select_slice: Optional[Tuple[int, int]]  = None,
+    batch_size: int = 16,
+    build_prompt_fn: Callable = None,
+    layer_idx: int = -1,
+    extract_token_activations_fn: Callable = None,
+    start_offset: int = 0,
+    end_offset: int = 0,
+    include_prompt: bool = True,
+) -> None:
+    """
+    Extract and save embeddings for the in-distribution (ID) and 
+    out-of-distribution (OOD) test sets of the generated answers.
+
+    Parameters
+    ----------
+    model_name : str
+        Name or path of the pretrained Llama model to load.
+    id_output_path : str
+        Path to save the ID test embeddings as a pickle file.
+    od_output_path : str
+        Path to save the OOD test embeddings as a pickle file.
+    seed : int
+        Random seed for reproducibility.
+    shuffle : bool
+        If true the dataset if shuffled with seed. 
+    select_slice : Optional[Tuple[int, int]]
+        (start, end) indices for slicing the dataset.
+    batch_size : int
+        Number of samples per batch for inference.
+    build_prompt_fn : callable
+        Function to build a prompt from context and question.
+    layer_idx : int
+        Index of the transformer layer to extract activations from.
+    extract_token_activations_fn : callable
+        Function to extract token activations from a model layer.
+    start_offset : int
+        Number of tokens to skip from the beginning of the sequence when extracting token 
+        activations with extract_token_activations_fn.
+    end_offset : int
+        The number of tokens to skip from the end of the sequence when extracting token
+        activations with extract_token_activations_fn.
+    include_prompt : bool
+        Whether to include the prompt in the embedding extraction.
+        - If include_prompt=False: 
+            start_offset is set to prompt length and end_offset is set to 0.
+        - If include_prompt=True: 
+            uses start_offset and end_offset specified in the args.
+        *Note:* Tokenization will always include the prompt.  
+    """  
+    # Seed everything
+    # -----------------------------------
+    seed_all(seed)
+
+    # Load model
+    # -----------------------------------
+    model, tokenizer = load_llama(model_name)
+
+    # Load ID and OOD test dataset
+    # -----------------------------------
+    id_test_dataset, od_test_dataset = prepare_test_dataset(seed, shuffle, select_slice)
+
+    # Retrieve test embeddings and save results 
+    # -----------------------------------
+    # Extract OOD test embeddings
+    print("\nStart retrieving test impossible embeddings from answers...")
+    t2 = time.time()
+    batch_extract_answer_token_activations(
+            model=model,
+            tokenizer=tokenizer,
+            dataset=od_test_dataset,
+            batch_size=batch_size,
+            idx_start_sample=0,
+            max_samples=len(od_test_dataset),
+            save_to_pkl=True,
+            output_path=od_output_path,
+            build_prompt_fn=build_prompt_fn,
+            get_layer_output_fn=get_layer_output,
+            layer_idx=layer_idx,
+            extract_token_activations_fn=extract_token_activations_fn,
+            include_prompt=include_prompt,
+            start_offset=start_offset,
+            end_offset=end_offset
+        )
+    t3 = time.time()
+    print("...end!")
+    print_time_elapsed(t2, t3, label="Impossible test embeddings: ")
+
+    # Extract ID test embeddings
+    print("\nStart retrieving test possible embeddings from answers...")
+    t4 = time.time()
+    batch_extract_answer_token_activations(
+            model=model,
+            tokenizer=tokenizer,
+            dataset=id_test_dataset,
+            batch_size=batch_size,
+            idx_start_sample=0,
+            max_samples=len(id_test_dataset),
+            save_to_pkl=True,
+            output_path=id_output_path,
+            build_prompt_fn=build_prompt_fn,
+            get_layer_output_fn=get_layer_output,
+            layer_idx=layer_idx,
+            extract_token_activations_fn=extract_token_activations_fn,
+            include_prompt=include_prompt,
+            start_offset=start_offset,
+            end_offset=end_offset
+        )
+    t5 = time.time()
+    print("end!")
+    print_time_elapsed(t4, t5, label="Possible test embeddings: ")
+
+    # Free memory
+    del od_test_dataset
+    del id_test_dataset
+
 
 # ====================================
 # Global variables  
@@ -452,10 +676,11 @@ def retrieve_test_embeddings(
 SEED = 44
 BATCH_SIZE = 16 #32
 MODEL_NAME = "meta-llama/Llama-2-7b-chat-hf"
-OUTPUT_DIR = "../results/raw/"
-PLOT_DIR   = "../results/figures/"
-START_OFFSET= 0 #40
-END_OFFSET= 0   #-4
+OUTPUT_DIR = "../results/raw/analyse_answers/"
+PLOT_DIR   = "../results/figures/analyse_answers/"
+INCLUDE_PROMPT_FOR_ANS = False
+START_OFFSET = 0 #40
+END_OFFSET = 0   #-4
 
 
 LAYER_LIST = [-1, 16]  # integer
@@ -479,8 +704,12 @@ def main() -> None:
             elif TOKENS=="Max":
                 EXTRACT_TOKEN_ACTIVATIONS = extract_max_token_activations
 
-            output_title = f"_layer{LAYER}_token{TOKENS}_so{START_OFFSET}_eo{END_OFFSET}.pkl"
-            print(f"\n\n=================Processing {output_title}=================")
+            if INCLUDE_PROMPT_FOR_ANS:
+                OUTPUT_TITLE = f"_layer{LAYER}_token{TOKENS}_so{START_OFFSET}_eo{END_OFFSET}"
+            else:
+                OUTPUT_TITLE = f"_layer{LAYER}_token{TOKENS}_excludePrompt"
+
+            print(f"\n\n=================Processing {OUTPUT_TITLE}=================")
 
             if False:
                 clear_cache()
@@ -495,12 +724,12 @@ def main() -> None:
                     build_prompt_fn=build_prompt
                 )
 
-            if True:
+            if False:
                 clear_cache()
-                retrieve_fit_embeddings(
+                retrieve_fit_inputs_embeddings(
                     model_name=MODEL_NAME,
                     seed=SEED,
-                    output_path=OUTPUT_DIR + "id_fit_results" + output_title,
+                    output_path=f"{OUTPUT_DIR}id_fit_results{OUTPUT_TITLE}.pkl",
                     custom_dataset_path="../data/datasets/id_fit_correct_dataset.pkl",
                     shuffle=True,
                     select_slice=(0,10_000),
@@ -513,13 +742,13 @@ def main() -> None:
                 )
 
 
-            if True:
+            if False:
                 clear_cache()
-                retrieve_test_embeddings(
+                retrieve_test_inputs_embeddings(
                     model_name=MODEL_NAME,
                     seed=SEED,
-                    id_output_path=OUTPUT_DIR + "id_test_results" + output_title,
-                    od_output_path=OUTPUT_DIR + "od_test_results" + output_title,
+                    id_output_path=f"{OUTPUT_DIR}id_test_results{OUTPUT_TITLE}.pkl",
+                    od_output_path=f"{OUTPUT_DIR}od_test_results{OUTPUT_TITLE}.pkl",
                     shuffle=True,
                     select_slice=(0,1000),
                     batch_size=BATCH_SIZE,
@@ -529,6 +758,45 @@ def main() -> None:
                     start_offset=START_OFFSET,
                     end_offset=END_OFFSET
                 )
+
+
+            if True:
+                clear_cache()
+                retrieve_fit_answers_embeddings(
+                    model_name=MODEL_NAME,
+                    seed=SEED,
+                    output_path=f"{OUTPUT_DIR}id_fit_results{OUTPUT_TITLE}.pkl",
+                    custom_dataset_path="../data/datasets/id_fit_correct_dataset.pkl",
+                    shuffle=True,
+                    select_slice=(0,10_000),
+                    batch_size=BATCH_SIZE,
+                    build_prompt_fn=build_prompt,
+                    layer_idx=LAYER,
+                    extract_token_activations_fn=EXTRACT_TOKEN_ACTIVATIONS,
+                    start_offset=START_OFFSET,
+                    end_offset=END_OFFSET,
+                    include_prompt=INCLUDE_PROMPT_FOR_ANS
+                )
+
+            
+            if True:
+                clear_cache()
+                retrieve_test_answers_embeddings(
+                    model_name=MODEL_NAME,
+                    seed=SEED,
+                    id_output_path=f"{OUTPUT_DIR}id_test_results{OUTPUT_TITLE}.pkl",
+                    od_output_path=f"{OUTPUT_DIR}od_test_results{OUTPUT_TITLE}.pkl",
+                    shuffle=True,
+                    select_slice=(0,1000),
+                    batch_size=BATCH_SIZE,
+                    build_prompt_fn=build_prompt,
+                    layer_idx=LAYER,
+                    extract_token_activations_fn=EXTRACT_TOKEN_ACTIVATIONS,
+                    start_offset=START_OFFSET,
+                    end_offset=END_OFFSET,
+                    include_prompt=INCLUDE_PROMPT_FOR_ANS
+                )
+
 
 
 if __name__ == "__main__":
