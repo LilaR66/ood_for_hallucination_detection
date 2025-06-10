@@ -36,7 +36,6 @@ sys.path.append(project_root)
 from typing import Optional, Tuple, Callable
 import time
 import pickle
-from transformers import PreTrainedTokenizer, PreTrainedModel
 from datasets import  Dataset
 from src.utils.general import seed_all, print_time_elapsed
 from src.model_loader.llama_loader import load_llama
@@ -49,7 +48,9 @@ from src.inference.inference_utils import (
     batch_extract_token_activations_with_generation, 
     batch_extract_token_activations, 
     batch_extract_answer_token_activations,
-    build_prompt,
+    build_prompt
+)
+from src.inference.activation_utils import (
     get_layer_output, 
     extract_last_token_activations, 
     extract_average_token_activations,
@@ -678,7 +679,7 @@ BATCH_SIZE = 16 #32
 MODEL_NAME = "meta-llama/Llama-2-7b-chat-hf"
 OUTPUT_DIR = "../results/raw/analyse_answers/"
 PLOT_DIR   = "../results/figures/analyse_answers/"
-INCLUDE_PROMPT_FOR_ANS = False
+INCLUDE_PROMPT_FOR_ANS = True
 START_OFFSET = 0 #40
 END_OFFSET = 0   #-4
 
@@ -724,7 +725,7 @@ def main() -> None:
                     build_prompt_fn=build_prompt
                 )
 
-            if False:
+            if False: 
                 clear_cache()
                 retrieve_fit_inputs_embeddings(
                     model_name=MODEL_NAME,
@@ -742,7 +743,7 @@ def main() -> None:
                 )
 
 
-            if False:
+            if False: 
                 clear_cache()
                 retrieve_test_inputs_embeddings(
                     model_name=MODEL_NAME,
@@ -758,6 +759,7 @@ def main() -> None:
                     start_offset=START_OFFSET,
                     end_offset=END_OFFSET
                 )
+
 
 
             if True:
