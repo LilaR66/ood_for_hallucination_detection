@@ -41,4 +41,7 @@ def load_llama(model_name: str = "meta-llama/Llama-2-7b-chat-hf"):
         #output_hidden_states=True, # to hidden activations -> memory overload since we access ALL hidden states 
         #force_download=True        # redo complete download 
     )
+
+    model.config.pad_token_id = model.config.eos_token_id # ensures that during generation all sequences are aligned with the EOS token, and not with random tokens. 
+    
     return model, tokenizer
