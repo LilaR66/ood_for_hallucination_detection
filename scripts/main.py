@@ -37,6 +37,7 @@ from typing import Optional, Tuple, Callable
 import time
 import pickle
 from datasets import  Dataset
+from functools import partial
 from src.utils.general import seed_all, print_time_elapsed
 from src.model_loader.llama_loader import load_llama
 from src.data_reader.squad_loader import (
@@ -52,9 +53,7 @@ from src.inference.inference_utils import (
 )
 from src.inference.activation_utils import (
     get_layer_output, 
-    extract_last_token_activations, 
-    extract_average_token_activations,
-    extract_max_token_activations
+    extract_token_activations
 )
 
 from src.data_reader.pickle_io import load_pickle_batches
@@ -699,11 +698,11 @@ def main() -> None:
 
             # Select function to extract token embeddings
             if TOKENS=="-1":
-                EXTRACT_TOKEN_ACTIVATIONS = extract_last_token_activations
+                EXTRACTION_MODE = "last"
             elif TOKENS=="Avg":
-                EXTRACT_TOKEN_ACTIVATIONS = extract_average_token_activations
+                EXTRACTION_MODE = "average"
             elif TOKENS=="Max":
-                EXTRACT_TOKEN_ACTIVATIONS = extract_max_token_activations
+                EXTRACTION_MODE = "max"
 
             if INCLUDE_PROMPT_FOR_ANS:
                 OUTPUT_TITLE = f"_layer{LAYER}_token{TOKENS}_so{START_OFFSET}_eo{END_OFFSET}"
@@ -737,7 +736,7 @@ def main() -> None:
                     batch_size=BATCH_SIZE,
                     build_prompt_fn=build_prompt,
                     layer_idx=LAYER,
-                    extract_token_activations_fn=EXTRACT_TOKEN_ACTIVATIONS,
+                    extract_token_activations_fn=partial(extract_token_activations, mode=EXTRACTION_MODE),
                     start_offset=START_OFFSET,
                     end_offset=END_OFFSET
                 )
@@ -755,11 +754,10 @@ def main() -> None:
                     batch_size=BATCH_SIZE,
                     build_prompt_fn=build_prompt,
                     layer_idx=LAYER,
-                    extract_token_activations_fn=EXTRACT_TOKEN_ACTIVATIONS,
+                    extract_token_activations_fn=partial(extract_token_activations, mode=EXTRACTION_MODE),
                     start_offset=START_OFFSET,
                     end_offset=END_OFFSET
                 )
-
 
 
             if True:
@@ -774,7 +772,7 @@ def main() -> None:
                     batch_size=BATCH_SIZE,
                     build_prompt_fn=build_prompt,
                     layer_idx=LAYER,
-                    extract_token_activations_fn=EXTRACT_TOKEN_ACTIVATIONS,
+                    extract_token_activations_fn=partial(extract_token_activations, mode=EXTRACTION_MODE),
                     start_offset=START_OFFSET,
                     end_offset=END_OFFSET,
                     include_prompt=INCLUDE_PROMPT_FOR_ANS
@@ -793,7 +791,7 @@ def main() -> None:
                     batch_size=BATCH_SIZE,
                     build_prompt_fn=build_prompt,
                     layer_idx=LAYER,
-                    extract_token_activations_fn=EXTRACT_TOKEN_ACTIVATIONS,
+                    extract_token_activations_fn=partial(extract_token_activations, mode=EXTRACTION_MODE),
                     start_offset=START_OFFSET,
                     end_offset=END_OFFSET,
                     include_prompt=INCLUDE_PROMPT_FOR_ANS

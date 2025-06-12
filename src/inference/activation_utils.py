@@ -23,7 +23,7 @@ Main Features
 
 from transformers import PreTrainedTokenizer, PreTrainedModel
 import torch
-from typing import Dict, Any, Tuple
+from typing import Dict, Any, Tuple, Literal
 
 
 def get_layer_output(
@@ -180,210 +180,115 @@ def compute_token_offsets(
     return start_offset, end_offset
 
 
-# Specific to Llama tokenizer: 
-def extract_last_token_activations(
+
+def extract_token_activations(
     selected_layer: torch.Tensor,
     attention_mask: torch.Tensor,
     device: torch.device,
-    end_offset: int = 0,
-    start_offset: int = 0
-) -> torch.Tensor:
-    """
-    Extract the activation vector of the token at a specific end_offset 
-    from the last non-padding token in each sequence. 
-
-    Parameters
-    ----------
-    selected_layer : torch.Tensor
-        Output tensor from the selected model layer (shape: batch_size x seq_len x hidden_size).
-    attention_mask : torch.Tensor
-        Attention mask indicating real tokens (1) vs padding (0) (shape: batch_size x seq_len).
-    device : torch.device
-        Device to perform indexing operations on.
-    end_offset : int, optional
-        Negative offset from the last non-padding token. Default is 0
-    start_offset : int, optionnal
-        Not used here, only useful for the rest of the pipeline. 
-
-    Returns
-    -------
-    torch.Tensor
-        Activation vectors of the selected token for each input (shape: batch_size x hidden_size).
-    """
-    # Find the index of the last non-padding token for each sequence
-    # Handle left and right padding
-    if (attention_mask[:, 0] == 0).any():  # If any sequence starts with padding, assume left padding
-        last_indices = (attention_mask.size(1) - 1) - attention_mask.flip(dims=[1]).argmax(dim=1)
-    else:  # right padding
-        last_indices = (attention_mask.sum(dim=1) - 1)
-    last_indices = last_indices.to(device)
-
-    # Compute the target index using the offset
-    target_indices = last_indices + end_offset #+1
-    # Convert indices to integer type
-    target_indices = target_indices.to(torch.long)  
-    batch_indices = torch.arange(selected_layer.size(0), device=device)
-    # Extract the activations at the target indices
-    return selected_layer[batch_indices, target_indices]
-
-
-# Specific to Llama tokenizer: 
-def extract_average_token_activations(
-    selected_layer: torch.Tensor,
-    attention_mask: torch.Tensor,
-    device: torch.device,
+    mode: Literal["average", "last", "max"] = "average",
     start_offset: int = 0,
     end_offset: int = 0
 ) -> torch.Tensor:
     """
-    Extract the mean activation vector over a token span for each sequence in a batch.
+    Extract token-level activations using one of three modes: average, last, or max.
+    Extract the activations vector over a token span for each sequence in a batch.
     The span is defined by applying start_offset (from the first non-padding token)
     and end_offset (from the last non-padding token).
+    Supports left/right/mixed padding.
 
     Parameters
     ----------
     selected_layer : torch.Tensor
-        Output tensor from the selected model layer (batch_size x seq_len x hidden_size).
+        Output tensor from the selected model layer of shape (batch_size, seq_len, hidden_size).
     attention_mask : torch.Tensor
-        Attention mask (batch_size x seq_len).
+        Attention mask of shape (batch_size, seq_len).
     device : torch.device
         Device for computation.
+    mode : str
+        Aggregation method: "average", "last", or "max".
     start_offset : int
-        Offset from first non-padding token (to skip e.g. [INST]).
+        Offset from the first non-padding token, used in "average"/"max" (to skip e.g. [INST]).
     end_offset : int
-        Offset from last non-padding token (to skip e.g. [/INST]).
+        Offset from the last non-padding token (to skip e.g. [\INST]).
 
     Returns
     -------
     torch.Tensor
-        Averaged embeddings (batch_size x hidden_size)
+        Aggregated embeddings of shape (batch_size, hidden_size)
     """
     batch_size, seq_len, _ = selected_layer.shape
 
-    # Detect left padding if any sequence starts with padding
-    is_left_padding = (attention_mask[:, 0] == 0).any()
-
-    # Find the index of the first and the  last non-padding token for each sequence
-    if is_left_padding:
-        #--- For left padding, first non-padding token is at index: number of padding tokens
-        first_indices = attention_mask.argmax(dim=1)
-        #--- For left padding, last non-padding token is at the end: compute its index by flipping and offsetting from the end
-        last_indices = (attention_mask.size(1) - 1) - attention_mask.flip(dims=[1]).argmax(dim=1)
-    else:
-        #--- For right padding, first non-padding token is always at index 0
-        first_indices = torch.zeros(batch_size, dtype=torch.long, device=device)
-        #--- For right padding, last non-padding token is at: (number of non-padding tokens) - 1
-        last_indices = (attention_mask.sum(dim=1) - 1)
-
+    # =======================================
+    # Compute first and last valid token positions (regardless of padding side)
+    # =======================================
+    # First non-padding token is at index: number of padding tokens
+    first_indices = attention_mask.float().argmax(dim=1)  
+    # Last non-padding token is at the end: compute its index by flipping and computing position from end
+    flipped_mask = attention_mask.flip(dims=[1])
+    last_offsets = flipped_mask.float().argmax(dim=1)
+    last_indices = seq_len - 1 - last_offsets
+    # Move to device
     first_indices = first_indices.to(device)
     last_indices = last_indices.to(device)
 
-    # Apply offsets (e.g., skip <s> [INST] or [\INST])
-    target_first_indices = first_indices + start_offset #-1
-    target_last_indices = last_indices + end_offset #+1
+    # =======================================
+    # Select the last token with optional offset
+    # =======================================
+    if mode == "last":
+        # Compute the target index using the offset and convert to integer type
+        target_last_indices = (last_indices + end_offset).to(torch.long) 
+        # Clamp indices to valid range 
+        target_last_indices = torch.clamp(target_last_indices, min=0, max=seq_len - 1)
+        batch_indices = torch.arange(batch_size, device=device)
+        # Optionally, return also the indices used
+        #indices = target_last_indices
+        # Extract last token activation
+        last = selected_layer[batch_indices, target_last_indices] # Shape: (batch_size, hidden_size)
+        return last
+    
+    # =======================================
+    # Build mask to select the token span 
+    # =======================================
+    # Compute target indices using the offsets and convert to integer type
+    target_first_indices = (first_indices + start_offset).to(torch.long) 
+    target_last_indices  = (last_indices + end_offset).to(torch.long) 
 
     # Clamp indices to valid range
     target_first_indices = torch.clamp(target_first_indices, min=0, max=seq_len - 1)
-    target_last_indices = torch.clamp(target_last_indices, min=0, max=seq_len - 1)
+    target_last_indices  = torch.clamp(target_last_indices, min=0, max=seq_len - 1)
 
-    # Compute mask for averaging
+    # Compute span mask
     #--- Create a tensor of positions: shape (1, seq_len), then expand to (batch_size, seq_len)
     positions = torch.arange(seq_len, device=device).unsqueeze(0).expand(batch_size, seq_len)
     #--- Build a boolean mask: True where the position is within [target_first_indices, target_last_indices] for each sequence
     mask = (positions >= target_first_indices.unsqueeze(1)) & (positions <= target_last_indices.unsqueeze(1))
     #--- Convert the boolean mask to float and add a singleton dimension for broadcasting with selected_layer
-    mask = mask.float().unsqueeze(-1)  # (batch_size, seq_len, 1)
+    mask = mask.float().unsqueeze(-1)  # Shape: (batch_size, seq_len, 1)
 
-    # Apply mask and compute mean
-    #--- Apply the mask to the activations: zero out tokens outside the target interval
-    masked = selected_layer * mask
-    #--- Count the number of selected tokens for each sequence (avoid division by zero with clamp)
-    counts = mask.sum(dim=1).clamp(min=1e-6)
-    #--- Compute the mean activation vector for each sequence over the selected interval
-    avg = masked.sum(dim=1) / counts # (batch_size, hidden_size)
+    # =======================================
+    # Apply mask and compute aggregation over the selected span  
+    # =======================================
+    if mode == "average":
+        #--- Apply the mask to the activations: zero out tokens outside the target interval
+        masked = selected_layer * mask
+        #--- Count the number of selected tokens for each sequence (avoid division by zero with clamp)
+        counts = mask.sum(dim=1).clamp(min=1e-6)
+        #--- Compute the mean activation vector for each sequence over the selected interval
+        avg = masked.sum(dim=1) / counts # Shape: (batch_size, hidden_size)
+        #--- Optionally, return also the indices used
+        #indices = torch.stack([target_first_indices, target_last_indices], dim=1)
+        return avg
 
-    # Optionally, return also the indices used
-    #indices = torch.stack([target_first_indices, target_last_indices], dim=1)
+    elif mode == "max":
+        #--- Apply the mask to the activations: zero out tokens outside the target interval
+        masked = selected_layer * mask.float()
+        #--- Replace padding with -inf to exclude from max calculation
+        masked = masked.masked_fill(mask.logical_not(), float('-inf'))
+        #--- Extract maximum values across sequence dimension
+        max, _ = masked.max(dim=1) # Shape: (batch_size, hidden_size)
+        #--- Optionally, return also the indices used
+        #indices = torch.stack([target_first_indices, target_last_indices], dim=1)
+        return max
 
-    return avg 
-
-
-# Specific to Llama tokenizer: 
-def extract_max_token_activations(
-    selected_layer: torch.Tensor,
-    attention_mask: torch.Tensor,
-    device: torch.device,
-    start_offset: int = 5,
-    end_offset: int = -5
-) -> torch.Tensor:
-    """
-    Extract the maximum activation vector over a token span for each sequence in a batch.
-    The span is defined by applying start_offset (from the first non-padding token)
-    and end_offset (from the last non-padding token).
-
-    Parameters
-    ----------
-    selected_layer : torch.Tensor
-        Output tensor from the selected model layer (batch_size x seq_len x hidden_size).
-    attention_mask : torch.Tensor
-        Attention mask (batch_size x seq_len).
-    device : torch.device
-        Device for computation.
-    start_offset : int
-        Offset from first non-padding token (to skip e.g. [INST]).
-    end_offset : int
-        Offset from last non-padding token (to skip e.g. [/INST]).
-
-    Returns
-    -------
-    torch.Tensor
-        Averaged embeddings (batch_size x hidden_size)
-    """
-    batch_size, seq_len, _ = selected_layer.shape
-
-    # Detect left padding if any sequence starts with padding
-    is_left_padding = (attention_mask[:, 0] == 0).any()
-
-    # Find the index of the first and the  last non-padding token for each sequence
-    if is_left_padding:
-        #--- For left padding, first non-padding token is at index: number of padding tokens
-        first_indices = attention_mask.argmax(dim=1)
-        #--- For left padding, last non-padding token is at the end: compute its index by flipping and offsetting from the end
-        last_indices = (attention_mask.size(1) - 1) - attention_mask.flip(dims=[1]).argmax(dim=1)
     else:
-        #--- For right padding, first non-padding token is always at index 0
-        first_indices = torch.zeros(batch_size, dtype=torch.long, device=device)
-        #--- For right padding, last non-padding token is at: (number of non-padding tokens) - 1
-        last_indices = (attention_mask.sum(dim=1) - 1)
-
-    first_indices = first_indices.to(device)
-    last_indices = last_indices.to(device)
-
-    # Apply offsets (e.g., skip <s> [INST] or [\INST])
-    target_first_indices = first_indices + start_offset #-1
-    target_last_indices = last_indices + end_offset #+1
-
-    # Clamp indices to valid range
-    target_first_indices = torch.clamp(target_first_indices, min=0, max=seq_len - 1)
-    target_last_indices = torch.clamp(target_last_indices, min=0, max=seq_len - 1)
-
-    # Compute mask for averaging
-    #--- Create a tensor of positions: shape (1, seq_len), then expand to (batch_size, seq_len)
-    positions = torch.arange(seq_len, device=device).unsqueeze(0).expand(batch_size, seq_len)
-    #--- Build a boolean mask: True where the position is within [target_first_indices, target_last_indices] for each sequence
-    mask = (positions >= target_first_indices.unsqueeze(1)) & (positions <= target_last_indices.unsqueeze(1))
-    #--- Convert the boolean mask to float and add a singleton dimension for broadcasting with selected_layer
-    mask = mask.float().unsqueeze(-1)  # (batch_size, seq_len, 1)
-
-    # Apply mask and compute mean
-    #--- Apply the mask to the activations: zero out tokens outside the target interval
-    masked = selected_layer * mask.float()
-    #--- Replace padding with -inf to exclude from max calculation
-    masked = masked.masked_fill(mask.logical_not(), float('-inf'))
-    #--- Extract maximum values across sequence dimension
-    max, _ = masked.max(dim=1) # (batch_size, hidden_size)
-
-    # Optionally, return also the indices used
-    #indices = torch.stack([target_first_indices, target_last_indices], dim=1)
-
-    return max 
+        raise ValueError(f"Unsupported mode: {mode}. Choose from 'average', 'last', or 'max'.")
