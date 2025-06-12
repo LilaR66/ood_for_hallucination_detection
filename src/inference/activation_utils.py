@@ -63,7 +63,10 @@ def get_layer_output(
         """Function called automatically by PyTorch just after
         the layer has produced its output during the forward pass."""
         # output is a tuple (hidden_states,) → keep [0]
-        captured_hidden["layer_output"] = output[0]
+        if layer_idx == -1:
+            captured_hidden["layer_output"] = model.model.norm(output[0])  # post RMSNorm!
+        else:
+            captured_hidden["layer_output"] = output[0]
 
     # Register hook on the transformer block
     # When Pytorch pass through this layer during forward pass, it also execute hook_fn.
