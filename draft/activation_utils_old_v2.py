@@ -23,123 +23,67 @@ Main Features
 
 from transformers import PreTrainedTokenizer, PreTrainedModel
 import torch
-from torch.utils.hooks import RemovableHandle
-from typing import Tuple, Literal, List
+from typing import Dict, Any, Tuple, Literal
 
 
-def register_forward_activation_hook(
-    model: PreTrainedModel,
-    captured_hidden: dict,
-    layer_idx: int = -1
-) -> RemovableHandle:
+def get_layer_output(
+    model: PreTrainedModel, 
+    inputs: Dict[str, torch.Tensor], 
+    layer_idx: int
+) -> torch.Tensor:
     """
-    Attaches a forward hook to a specific transformer layer to capture hidden states 
-    during a single forward pass (more memory-efficient than using output_hidden_states=True).
-    Transformer layer = self-attention + FFN + normalization.
-
-    Parameters
-    ----------
-    model : PreTrainedModel
-        The Hugging Face causal language model (e.g., GPT, LLaMA).
-    captured_hidden : dict
-        Dictionary used to store the hidden states from the forward pass (will be overwritten).
-        captured_hidden["activations"] of shape (batch_size, seq_len, hidden_size).
-    layer_idx : int
-        Index of the transformer block to hook. Defaults to -1 (the last layer).
-        Use a positive integer if you want to hook an intermediate layer instead.
-
-    Returns
-    ----------
-    RemovableHandle : A handle object
-        Call `handle.remove()` after generation to remove the hook.
-    call_counter : int 
-        Stores the number of times the hook is activated.
-    """
-    # Raise error if layer_idx not in correct range
-    num_layers = len(model.model.layers)
-    if not (layer_idx == -1 or 0 <= layer_idx < num_layers):
-        raise ValueError(
-            f"`layer_idx` must be -1 or in [0, {num_layers - 1}], but got {layer_idx}."
-        )
-    
-    call_counter = {"count": 0} # count how many times the hook is triggered
-    
-    def hook_fn(module, input, output):
-        """Function called automatically by PyTorch just after
-        the layer has produced its output during the forward pass."""
-        
-        call_counter["count"] += 1 
-        
-        # output is a tuple (hidden_states,) → keep [0]
-        if layer_idx == -1:
-            captured_hidden["activations"] = model.model.norm(output[0])  # post RMSNorm!
-        else:
-            captured_hidden["activations"] = output[0]
-
-    # Register hook on the transformer block
-    # When Pytorch pass through this layer during a forward pass, it also execute hook_fn.
-    handle = model.model.layers[layer_idx].register_forward_hook(hook_fn)
-
-    return handle, call_counter
-
-
-def register_generation_activation_hook(
-    model: PreTrainedModel,
-    captured_hidden_list: List[torch.Tensor],
-    layer_idx: int = -1
-) -> RemovableHandle:
-    """
-    Attaches a forward hook to a specific transformer layer to capture hidden states
-    during autoregressive text generation i.e., at each decoding step.
+    Run a forward pass and extract the hidden states from a specific transformer layer
     (more memory-efficient than using output_hidden_states=True).
     Transformer layer = self-attention + FFN + normalization.
 
     Parameters
     ----------
     model : PreTrainedModel
-        The Hugging Face causal language model (e.g., GPT, LLaMA).
-    captured_hidden_list : List[torch.Tensor]
-        A list that will be filled with hidden states for each generation step. 
-        Each tensor has shape (batch_size * num_beams, seq_len, hidden_size).
+        A Hugging Face causal language model (e.g., LLaMA, GPT-2).
+    inputs : dict
+        Tokenized inputs returned by a tokenizer with return_tensors="pt".
     layer_idx : int
-        Index of the transformer block to hook. Defaults to -1 (the last layer).
-        Use a positive integer if you want to hook an intermediate layer instead.
+        Index of the transformer block to capture:
+        - Use 0 to N-1 for internal layers.
+        - Use -1 to retrieve the final transformer block (not logits).
 
     Returns
-    ----------
-    RemovableHandle : A handle object
-        Call `handle.remove()` after generation to remove the hook.
-    call_counter : int 
-        Stores the number of times the hook is activated.
+    -------
+    torch.Tensor
+        Hidden states from the selected transformer layer.
+        Shape: (batch_size, seq_len, hidden_size)
     """
-    # Raise error if layer_idx not in correct range
-    num_layers = len(model.model.layers)
-    if not (layer_idx == -1 or 0 <= layer_idx < num_layers):
-        raise ValueError(
-            f"`layer_idx` must be -1 or in [0, {num_layers - 1}], but got {layer_idx}."
-        )
-    
-    call_counter = {"count": 0} # count how many times the hook is triggered
+    # If layer_idx = -1, interpret as "last transformer block"
+    if layer_idx == -1:
+        layer_idx = len(model.model.layers) - 1  # last layer index
+
+    captured_hidden = {}
 
     def hook_fn(module, input, output):
         """Function called automatically by PyTorch just after
-            the layer has produced its output during the forward pass."""
-        
-        call_counter["count"] += 1 
-
+        the layer has produced its output during the forward pass."""
         # output is a tuple (hidden_states,) → keep [0]
         if layer_idx == -1:
-            # Capture the final normalized output 
-            captured_hidden_list.append(model.model.norm(output[0]).detach().cpu())  # post RMSNorm!
+            captured_hidden["layer_output"] = model.model.norm(output[0])  # post RMSNorm!
         else:
-            # Capture raw hidden states before layer normalization
-            captured_hidden_list.append(output[0].detach().cpu()) 
-    
+            captured_hidden["layer_output"] = output[0]
+
     # Register hook on the transformer block
     # When Pytorch pass through this layer during forward pass, it also execute hook_fn.
     handle = model.model.layers[layer_idx].register_forward_hook(hook_fn)
-    
-    return handle, call_counter
+
+    # Pass inputs through the model
+    # When the target layer is reached, the hook executes and saves its output in captured_hidden.
+    with torch.no_grad():
+        _ = model(**inputs, return_dict=True)
+
+    # Remove the hook to avoid polluting future passages
+    handle.remove()
+
+    if "layer_output" not in captured_hidden:
+        raise RuntimeError(f"Layer {layer_idx} did not produce an output.")
+
+    return captured_hidden["layer_output"]  # shape: (batch_size, seq_len, hidden_size)
 
 
 def compute_token_offsets(
