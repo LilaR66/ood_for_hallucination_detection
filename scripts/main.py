@@ -764,7 +764,7 @@ def main() -> None:
                 )
 
 
-            if True:
+            if False:
                 clear_cache()
                 retrieve_fit_answers_embeddings_pipeline(
                     model_name=MODEL_NAME,
@@ -784,7 +784,7 @@ def main() -> None:
                 )
 
             
-            if True:
+            if False:
                 clear_cache()
                 retrieve_test_answers_embeddings_pipeline(
                     model_name=MODEL_NAME,
@@ -802,6 +802,34 @@ def main() -> None:
                     start_offset=START_OFFSET,
                     end_offset=END_OFFSET,
                 )
+
+            
+            # Evil Code for squatting on deel machines 
+            # during the home-IRT commute (｀∀´)Ψ
+            import time
+            try:
+                while True: 
+                    clear_cache()
+                    OUTPUT_DIR = "../results/raw/TEST/"
+                    print("Infinite loop.")
+                    retrieve_test_inputs_embeddings_pipeline(
+                        model_name=MODEL_NAME,
+                        seed=SEED,
+                        id_output_path=f"{OUTPUT_DIR}id_test_results{OUTPUT_PROMPT_TITLE}.pkl",
+                        od_output_path=f"{OUTPUT_DIR}od_test_results{OUTPUT_PROMPT_TITLE}.pkl",
+                        shuffle=True,
+                        select_slice=(0,100), #(0,1000),
+                        batch_size=BATCH_SIZE,
+                        build_prompt_fn=build_prompt,
+                        layer_idx=LAYER,
+                        extract_token_activations_fn=partial(extract_token_activations, mode=EXTRACTION_MODE),
+                        start_offset=START_OFFSET,
+                        end_offset=END_OFFSET
+                    )
+                    time.sleep(120)  # Pause after execution
+            except KeyboardInterrupt:
+                print("Stop of the infinite loop.")
+
 
 
 

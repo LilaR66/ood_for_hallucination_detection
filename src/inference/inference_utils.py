@@ -30,6 +30,7 @@ import time
 
 from src.evaluation.similarity_metrics import rouge_l_simScore, sentence_bert_simScore
 from src.data_reader.pickle_io import append_to_pickle
+from src.inference.activation_utils import compute_offset_attention_mask
 
 # Specific to Llama tokenizer: 
 def build_prompt(context:str, question:str) -> str:
@@ -304,7 +305,6 @@ def analyze_single_generation(
     register_forward_activation_hook_fn: Callable = None,
     layer_idx: int = -1,
     extract_token_activations_fn: Callable = None,
-    **kwargs
 ) -> Dict[str, Any]:
     """
     Analyze a single sample from the dataset through the full inference pipeline:
@@ -334,8 +334,6 @@ def analyze_single_generation(
         Index of the transformer layer to extract activations from (default -1: last layer).
     extract_token_activations_fn : Callable
         Function that selects and aggregates token-level activations.
-    **kwargs :
-        Additional keyword arguments passed to extract_token_activations_fn.
 
     Returns
     -------
@@ -401,8 +399,7 @@ def analyze_single_generation(
     selected_token_vecs = extract_token_activations_fn(
         selected_layer=layer_output,
         attention_mask=inputs["attention_mask"],
-        device=layer_output.device,
-        **kwargs
+        device=layer_output.device
     )
     times['token_activations'] = time.time() - t3
 
@@ -594,7 +591,8 @@ def run_prompt_activation_extraction(
     register_forward_activation_hook_fn: Callable = None,
     layer_idx: int = -1,  
     extract_token_activations_fn: Callable = None,
-    **kwargs
+    start_offset: int = 0,
+    end_offset: int = 0
 ) -> Union [Tuple[List[torch.Tensor]], None]:
     """
     Runs batched inference on a dataset using a decoder-only language model.
@@ -631,8 +629,10 @@ def run_prompt_activation_extraction(
         Index of the transformer layer to extract activations from (default: -1 for last layer).
     extract_token_activations_fn : Callable
         Function that selects and aggregates token-level activations. 
-    **kwargs :
-        Extra keyword arguments passed to extract_token_activations_fn.
+    start_offset : int
+        Offset from the first non-padding token (must be >= 0). 
+    end_offset : int
+        Offset from the last non-padding token (must be <= 0, e.g., -3 to remove 3 tokens).
     
     Returns
     -------
@@ -657,6 +657,7 @@ def run_prompt_activation_extraction(
         batch = extract_batch(dataset, i, batch_size)
         prompts = [build_prompt_fn(s["context"], s["question"]) for s in batch]
         inputs = tokenizer(prompts, padding=True, truncation=True, return_tensors="pt").to(model.device)
+        prompt_attention_mask = inputs["attention_mask"]
 
         # ==============================
         # Register forward hook to capture layer output
@@ -679,16 +680,26 @@ def run_prompt_activation_extraction(
         if "activations" not in captured_hidden:
             raise RuntimeError("Hook failed to capture activations.")
 
+        layer_output = captured_hidden["activations"]  # Shape: (batch_size, seq_len, hidden_size)
+
+        # ===============================
+        # Modify prompt attention mask with offsets
+        # ===============================
+        if start_offset !=0 or end_offset !=0:
+            prompt_attention_mask, start_indices, end_indices = compute_offset_attention_mask(
+                attention_mask=prompt_attention_mask, 
+                start_offset=start_offset, 
+                end_offset=end_offset
+            ) # Shape (batch_size, seq_len), (batch_size,), (batch_size,)
+          
         # ==============================
         # Extract token activations from captured layer
         # ==============================
-        layer_output = captured_hidden["activations"]  # Shape: (batch_size, seq_len, hidden_size)
-
         selected_token_vecs = extract_token_activations_fn(
-                selected_layer=layer_output , 
-                attention_mask=inputs["attention_mask"], 
+                selected_layer=layer_output, 
+                attention_mask=prompt_attention_mask, 
                 device=layer_output.device,
-                **kwargs)  # Shape (batch_size, hidden_size)
+            )  # Shape (batch_size, hidden_size)
         
         # ==============================
         # Store results (to file or memory)
@@ -728,7 +739,8 @@ def run_prompt_and_generation_activation_extraction(
     extract_token_activations_fn: Callable = None,
     activation_source: Literal["prompt", "generation", "promptGeneration"] = "generation",
     k_beams : int = 1,
-    **kwargs
+    start_offset : int = 0,
+    end_offset : int = 0,
 ) -> Union[List[torch.Tensor], None]:
     """
     Runs batched inference on a dataset using a decoder-only language model.
@@ -774,8 +786,10 @@ def run_prompt_and_generation_activation_extraction(
         - "promptGeneration": prompt and generation answer both concatenated
     k_beams : int, optional
         Number of beams for beam search during generation (default: 1). If 1, uses sampling. 
-    **kwargs :
-        Extra keyword arguments passed to extract_token_activations_fn.
+    start_offset : int
+        Offset from the first non-padding token (must be >= 0). 
+    end_offset : int
+        Offset from the last non-padding token (must be <= 0, e.g., -3 to remove 3 tokens).
     
     Returns
     -------
@@ -956,6 +970,16 @@ def run_prompt_and_generation_activation_extraction(
         prompt_attention_mask = inputs["attention_mask"] 
         # Shape (batch_size, prompt_len)
         
+        # ===============================
+        # Modify prompt attention mask with offsets
+        # ===============================
+        if start_offset !=0 or end_offset !=0:
+            prompt_attention_mask, start_indices, end_indices = compute_offset_attention_mask(
+                attention_mask=prompt_attention_mask, 
+                start_offset=start_offset, 
+                end_offset=end_offset
+            ) # Shape (batch_size, prompt_len), (batch_size,), (batch_size,)
+
         # Concatenate the prompt and generation attention mask
         prompt_and_gen_attention_mask = torch.cat(
             [prompt_attention_mask,
@@ -972,7 +996,7 @@ def run_prompt_and_generation_activation_extraction(
                     selected_layer=aligned_generation_hidden_states, 
                     attention_mask=generation_attention_mask, 
                     device=aligned_generation_hidden_states.device,
-                    **kwargs) # Shape (batch_size, hidden_size)
+                ) # Shape (batch_size, hidden_size)
             
         elif activation_source == "prompt":    
             # Return only the token activations from the prompt
@@ -980,7 +1004,7 @@ def run_prompt_and_generation_activation_extraction(
                     selected_layer=aligned_prompt_hidden_states, 
                     attention_mask=prompt_attention_mask, 
                     device=aligned_prompt_hidden_states.device,
-                    **kwargs) # Shape (batch_size, hidden_size)
+                ) # Shape (batch_size, hidden_size)
             
         elif activation_source == "promptGeneration":
             # Return token activations from the concatenated prompt + generated answer 
@@ -988,7 +1012,10 @@ def run_prompt_and_generation_activation_extraction(
                     selected_layer=aligned_prompt_and_gen_hidden_states, 
                     attention_mask=prompt_and_gen_attention_mask, 
                     device=aligned_prompt_and_gen_hidden_states.device,
-                    **kwargs) # Shape (batch_size, hidden_size)
+                    skip_length=prompt_len 
+                    # skip_length: exclude prompt from computation if 
+                    # mode=='first_generated' in `extract_token_activations_fn`
+                ) # Shape (batch_size, hidden_size)
 
         else:
             raise ValueError(
