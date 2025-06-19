@@ -925,7 +925,7 @@ def run_prompt_and_generation_activation_extraction(
         # selected by the beam search (or top-k sampling if k_beams = 1)
         aligned_generation_hidden_states = align_generation_hidden_states(
             generation_activations=generation_activations, 
-            beam_indices=truncated_beam_indices if k_beams < 1 else None,
+            beam_indices=truncated_beam_indices if k_beams > 1 else None,
             k_beams=k_beams
         ) # Shape: (batch_size, gen_len, hidden_size)
 
