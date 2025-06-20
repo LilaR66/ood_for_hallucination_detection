@@ -33,6 +33,7 @@ from src.data_reader.pickle_io import append_to_pickle
 from src.inference.activation_utils import compute_offset_attention_mask
 
 # Specific to Llama tokenizer: 
+'''
 def build_prompt(context:str, question:str) -> str:
     """
     Construct a structured prompt for question answering with an LLM.
@@ -60,7 +61,40 @@ def build_prompt(context:str, question:str) -> str:
     """
     prompt = f"[INST] <<SYS>>\nJust give the answer, without a complete sentence. Reply with 'Impossible to answer' if answer not in context.\n<<SYS>>\n\nContext:\n" + context + "\n\nQuestion:\n" + question  + "\n\nAnswer:\n[/INST]" 
     return prompt
+'''
 
+# Specific to Llama tokenizer:
+def build_prompt(context:str, question:str) -> str:
+    """
+    Construct a structured prompt for question answering with an LLM.
+
+    The prompt includes the special formatting: `[INST]`, [/INST]`, `<<SYS>>`
+    as recommended here: https://huggingface.co/meta-llama/Llama-2-7b-chat-hf
+
+    The prompt is formatted according to this paper:
+    "The Curious Case of Hallucinatory (Un)answerability: Finding Truths in
+    the Hidden States of Over-Confident Large Language Models (2023)" 
+
+    **Note:** the llama tokenizer adds a special `<s> ` before `[INST]`. 
+    **Note:** we also experimented with giving 2-3 few shot prompts. 
+    However, just appending the sentence "Just give the answer, without a complete sentence." 
+    at the begining of the prompt seemed to work best. 
+
+    Parameters
+    ----------
+    context : str
+        The input passage or context from which the answer should be extracted.
+    question : str
+        The question to be answered based on the provided context.
+
+    Returns
+    -------
+    str
+        A formatted prompt string ready to be fed to a language model.
+    
+    """
+    prompt = f"[INST] <<SYS>>\nGiven the following passage and question, answer the question by only giving the answer without a complete sentence.\nIf it cannot be answered based on the passage, reply 'unanswerable':\n<<SYS>>\nPassage: " + context + "\nQuestion: " + question + "\n[/INST]" 
+    return prompt
 
 
 def extract_batch(
