@@ -2,9 +2,6 @@
 
 import torch
 import numpy as np
-from sklearn.metrics import roc_curve, roc_auc_score
-import matplotlib.pyplot as plt
-from typing import Tuple, Any
 # if you have cuda version 12:
 # uv pip install faiss-gpu-cu12
 import faiss 
@@ -85,7 +82,7 @@ def score_tensor(
     Returns
     -------
     np.ndarray
-        Array of distances to the k-th nearest neighbor
+        Array of distances to the k-th nearest neighbor of shape (N,)
     """
 
     # Convert to numpy float32 array
@@ -108,134 +105,3 @@ def score_tensor(
     # Concatenate results from all batches
     return np.concatenate(all_scores)
 
-
-def compute_auroc(
-    dknn_scores_id: np.ndarray,
-    dknn_scores_ood: np.ndarray,
-    plot: bool = False,
-    save_path: str = None,
-) -> Tuple[float, np.ndarray, np.ndarray, np.ndarray]:
-    """
-    Compute the Area Under the ROC Curve (auROC) for OOD detection using DKNN scores.
-
-    This function concatenates the DKNN scores from ID and OOD samples,
-    assigns binary labels (0 for ID, 1 for OOD), computes the ROC curve and auROC, 
-    and optionally plots the ROC curve.
-
-    Parameters
-    ----------
-    dknn_scores_id : np.ndarray
-        DKNN scores for ID samples.
-    dknn_scores_ood : np.ndarray
-        DKNN scores for OOD samples.
-    plot : bool, optional (default=False)
-        If True, plot the ROC curve.
-    save_path : str, optional (default=None)
-        If provided, save the ROC curve image to this path (e.g. "plot.png").
-
-    Returns
-    -------
-    auroc : float
-        Area under the ROC curve.
-    fpr : np.ndarray
-        False positive rates at different thresholds.
-    tpr : np.ndarray
-        True positive rates at different thresholds.
-    thresholds : np.ndarray
-        Thresholds used to compute FPR and TPR.
-    """
-    # Concatenate scores and create labels
-    all_scores = np.concatenate([dknn_scores_id, dknn_scores_ood])
-    all_labels = np.concatenate([
-        np.zeros_like(dknn_scores_id),  # 0 for ID
-        np.ones_like(dknn_scores_ood)   # 1 for OOD
-    ])
-
-    # Compute ROC curve and auROC
-    fpr, tpr, thresholds = roc_curve(all_labels, all_scores)
-    auroc = roc_auc_score(all_labels, all_scores)
-
-    print(f"auROC: {auroc:.4f}")
-
-    # Optionally plot the ROC curve
-    if plot or save_path:
-        plt.figure()
-        plt.plot(fpr, tpr, label=f"auROC = {auroc:.4f}")
-        plt.xlabel("False Positive Rate")
-        plt.ylabel("True Positive Rate")
-        plt.title("ROC Curve")
-        plt.legend()
-        plt.grid(True)
-        if save_path:
-            plt.savefig(save_path, bbox_inches='tight')
-        if plot:
-            plt.show()
-        else:
-            plt.close()
-
-    return auroc, fpr, tpr, thresholds
-
-
-
-def plot_score_distributions(
-    dknn_scores_id: np.ndarray,
-    dknn_scores_ood: np.ndarray,
-    bins: int = 50,
-    xlabel: str = "Distance to k-th NN",
-    title: str = "Distribution of DKNN Scores",
-    figsize: Tuple[int, int] = (10, 6),
-    save_path: str = None,
-) -> plt.Figure:
-    """
-    Plot overlapping histograms of ID and OOD scores to compare their distributions.
-
-    Parameters
-    ----------
-    dknn_scores_id : np.ndarray
-        Scores for in-distribution samples
-    dknn_scores_ood : np.ndarray
-        Scores for out-of-distribution samples
-    bins : int, optional (default=50)
-        Number of histogram bins
-    xlabel : str, optional
-        Label for x-axis
-    title : str, optional
-        Plot title
-    figsize : Tuple[int, int], optional
-        Figure size
-    save_path : str, optional
-        If provided, the plot will be saved to this path (e.g. "plot.png")
-
-    Returns
-    -------
-    plt.Figure
-        Matplotlib figure object
-    """
-    plt.figure(figsize=figsize)
-    
-    # Plot histograms with transparency
-    plt.hist(dknn_scores_id, bins=bins, alpha=0.5, label="ID", density=True, color="blue")
-    plt.hist(dknn_scores_ood, bins=bins, alpha=0.5, label="OOD", density=True, color="red")
-    
-    # Add labels and styling
-    plt.xlabel(xlabel, fontsize=12)
-    plt.ylabel("Density", fontsize=12)
-    plt.title(title, fontsize=14)
-    plt.legend(loc="upper right")
-    plt.grid(True, linestyle="--", alpha=0.7)
-    
-    # Add text box with summary stats
-    stats_text = (f"ID mean: {dknn_scores_id.mean():.2f} ± {dknn_scores_id.std():.2f}\n"
-                  f"OOD mean: {dknn_scores_ood.mean():.2f} ± {dknn_scores_ood.std():.2f}")
-    plt.gca().text(
-        0.0, 0.95, stats_text,
-        transform=plt.gca().transAxes,
-        verticalalignment="top",
-        horizontalalignment="left",
-        bbox=dict(boxstyle="round", alpha=0.2, facecolor="w")
-    )
-    if save_path:
-        plt.savefig(save_path, bbox_inches='tight')
-
-    plt.show()
-    #return plt.gcf() # return figure if needed
