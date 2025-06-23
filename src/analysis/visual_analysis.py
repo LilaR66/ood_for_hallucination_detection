@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 
 import numpy as np
-from sklearn.metrics import roc_curve, roc_auc_score
+from sklearn.metrics import roc_curve, roc_auc_score,  confusion_matrix
+import seaborn as sns
 import matplotlib.pyplot as plt
 from typing import Tuple
 from sklearn.preprocessing import StandardScaler
@@ -161,6 +162,85 @@ def plot_score_distributions(
 
     plt.show()
     #return plt.gcf() # return figure if needed
+
+
+def compute_confusion_matrix(
+    threshold: float,
+    scores_id: np.ndarray,
+    scores_ood: np.ndarray,
+    plot: bool = True,
+    normalize: bool = False,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Compute the 2x2 confusion matrix for OOD detection using scores_id and scores_ood.
+
+    This function:
+    - Assigns ground-truth labels (0 for ID, 1 for OOD),
+    - Applies a threshold to scores to classify each sample as ID (<= threshold) or OOD (> threshold),
+    - Computes the binary confusion matrix (TP, FP, FN, TN),
+    - Optionally plots the confusion matrix using seaborn.
+
+    Parameters
+    ----------
+    threshold : float
+        Threshold used to distinguish between ID and OOD samples.
+        Scores > threshold are classified as OOD, <= threshold as ID.
+    scores_id : np.ndarray
+        DKNN scores for in-distribution (ID) samples.
+    scores_ood : np.ndarray
+        DKNN scores for out-of-distribution (OOD) samples.
+    plot : bool, optional (default=True)
+        If True, plot the confusion matrix using seaborn.
+    normalize : bool, optional (default=False)
+        If True, normalize each row of the confusion matrix to sum to 1.
+
+    Returns
+    -------
+    cm : np.ndarray
+        Confusion matrix of shape (2, 2):
+            - Rows: actual labels (0 = ID, 1 = OOD)
+            - Columns: predicted labels (0 = predicted ID, 1 = predicted OOD)
+    y_true : np.ndarray
+        The ground-truth labels used to compute the confusion matrix.
+    y_pred : np.ndarray
+        The predicted labels used to compute the confusion matrix.
+
+    Notes
+    -----
+    Predicted class is assigned as follows:
+    - score > threshold -> predicted OOD (label 1)
+    - score <= threshold -> predicted ID (label 0)
+    """
+    # Ground-truth labels: 0 for ID, 1 for OOD
+    y_true = np.concatenate((
+        np.zeros(len(scores_id)),
+        np.ones(len(scores_ood))
+    ))
+
+    # Predicted labels based on threshold
+    y_pred = np.concatenate((
+        (scores_id > threshold).astype(int),
+        (scores_ood > threshold).astype(int)
+    ))
+
+    # Compute the confusion matrix
+    cm = confusion_matrix(y_true, y_pred)
+
+    if normalize:
+        cm = cm.astype(np.float32) / cm.sum(axis=1, keepdims=True)
+
+    if plot:
+        plt.figure(figsize=(5, 4))
+        sns.heatmap(cm, annot=True, fmt=".2f" if normalize else "d", cmap="Blues",
+                    xticklabels=["Predicted ID", "Predicted OOD"],
+                    yticklabels=["True ID", "True OOD"])
+        plt.xlabel("Prediction")
+        plt.ylabel("Ground Truth")
+        plt.title("Binary Confusion Matrix")
+        plt.tight_layout()
+        plt.show()
+
+    return cm, y_true, y_pred
 
 
 
