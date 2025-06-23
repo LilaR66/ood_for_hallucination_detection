@@ -59,7 +59,7 @@ def build_prompt(context:str, question:str) -> str:
         A formatted prompt string ready to be fed to a language model.
     
     """
-    prompt = f"[INST] <<SYS>>\nJust give the answer, without a complete sentence. Reply with 'Impossible to answer' if answer not in context.\n<<SYS>>\n\nContext:\n" + context + "\n\nQuestion:\n" + question  + "\n\nAnswer:\n[/INST]" 
+    prompt = f"[INST] <<SYS>>\nJust give the answer, without a complete sentence. Reply with 'Impossible to answer' if answer not in context.\n<</SYS>>\n\nContext:\n" + context + "\n\nQuestion:\n" + question  + "\n\nAnswer:\n[/INST]" 
     return prompt
 '''
 
@@ -93,7 +93,12 @@ def build_prompt(context:str, question:str) -> str:
         A formatted prompt string ready to be fed to a language model.
     
     """
-    prompt = f"[INST] <<SYS>>\nGiven the following passage and question, answer the question by only giving the answer without a complete sentence.\nIf it cannot be answered based on the passage, reply 'unanswerable':\n<<SYS>>\nPassage: " + context + "\nQuestion: " + question + "\n[/INST]" 
+    B_INST = "[INST]"
+    E_INST = "[/INST]"
+    B_SYS = "<<SYS>>\n"
+    E_SYS = "\n<</SYS>>\n\n"
+    HINT = "Given the following passage and question, answer the question by only giving the answer without a complete sentence.\nIf it cannot be answered based on the passage, reply 'unanswerable':"
+    prompt = f"{B_INST} {B_SYS}{HINT}{E_SYS}Passage: {context}\nQuestion: {question} {E_INST}"
     return prompt
 
 
