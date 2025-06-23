@@ -143,13 +143,14 @@ def register_generation_activation_hook(
     return handle, call_counter
 
 
-
 def compute_token_offsets(
     text: str,
     tokenizer: PreTrainedTokenizer,
     start_phrase: str,
     end_phrase: str,
-    debug: bool = False
+    include_start_phrase: bool = False,
+    include_end_phrase: bool = False,
+    debug: bool = False,
 ) -> Tuple[int, int]:
     """
     Compute start_offset (number of tokens before the first occurrence of start_phrase)
@@ -166,6 +167,10 @@ def compute_token_offsets(
         The phrase before which to count tokens (e.g., "Context:").
     end_phrase : str
         The phrase after which to count tokens (e.g., "[/INST]").
+    include_start_phrase : bool, optional
+        If True, include the start_phrase itself in the offset.
+    include_end_phrase : bool, optional
+        If True, include the end_phrase itself in the offset.
     debug : bool = False
         Wheter to display information
     
@@ -180,27 +185,37 @@ def compute_token_offsets(
         print("===== Input text =====")
         print(text)
 
-    #----- Tokenize the input text and get the mapping from each token to its character position in the text
+    # ==============================
+    # Tokenize the input text and get the mapping from each token to its character position in the text
+    # ==============================
     encoding = tokenizer( 
         text,
         return_offsets_mapping=True, # match each token to its exact position in the text
-        add_special_tokens=True #False
+        add_special_tokens=True 
     ) 
     offsets = encoding['offset_mapping']  # List of (start_char, end_char) for each token
     input_ids = encoding['input_ids']     # List of token IDs for the text
  
-    #----- Find character indices of the phrases in the text
+    # ==============================
+    # Find character indices of the phrases in the text
+    # ==============================
     # Find the character index where the start_phrase first appears in the text
     start_char_idx = text.find(start_phrase)
+    if not include_start_phrase: 
+        start_char_idx = start_char_idx + len(start_phrase)
     # Find the character index where the end_phrase last appears in the text
     end_char_idx = text.rfind(end_phrase)
+    if not include_end_phrase :
+        end_char_idx = end_char_idx - len(end_phrase)
     # Raise an error if either phrase is not found
     if start_char_idx == -1:
         raise ValueError(f"Start phrase '{start_phrase}' not found in text.")
     if end_char_idx == -1:
         raise ValueError(f"End phrase '{end_phrase}' not found in text.")
 
-    #---- Find the index of the first token whose span covers or starts after the start_char_idx
+    # ==============================
+    # Find the index of the first token whose span covers or starts after the start_char_idx
+    # ==============================
     start_offset = None
     for idx, (start, end) in enumerate(offsets):
         # If the token covers start_char_idx or starts after it, use this token
@@ -211,7 +226,9 @@ def compute_token_offsets(
     if start_offset is None:
         start_offset = len(offsets)
 
-    #---- Find last token whose span includes (or ends after) the end of end_phrase
+    # ==============================
+    # Find last token whose span includes (or ends after) the end of end_phrase
+    # ==============================
     # Compute the end character index for the end_phrase (i.e., where it finishes)
     end_phrase_end = end_char_idx + len(end_phrase)
     last_token_idx = None
@@ -224,17 +241,24 @@ def compute_token_offsets(
     if last_token_idx is None:
         last_token_idx = len(offsets) - 1
 
-    #---- Calculate how many tokens are after the last token of end_phrase
+    # ==============================
+    # Calculate how many tokens are after the last token of end_phrase
+    # ==============================
     end_offset = len(offsets) - (last_token_idx + 1)
     end_offset = -end_offset
 
-    #---- Display text between start_offset and end_offset for verification
+    # ==============================
+    # Display text between start_offset and end_offset for verification
+    # ==============================
     if debug:
         print("\n===== Decoded text between `start_offset` and `end_offset` =====")
-        print(f"----START TEXT----{tokenizer.decode(input_ids[start_offset:end_offset])}----END TEXT----")
+        if end_offset != 0:
+            print(f"----START TEXT----{tokenizer.decode(input_ids[start_offset:end_offset])}----END TEXT----")
+        else :
+            print(f"----START TEXT----{tokenizer.decode(input_ids[start_offset:])}----END TEXT----")
         print(f"\nstart_offset: {start_offset}, end_offset:{end_offset}")
 
-    #---- Return the number of tokens before start_phrase and after end_phrase
+    # Return the number of tokens before start_phrase and after end_phrase
     return start_offset, end_offset
 
 
@@ -393,9 +417,6 @@ def extract_token_activations(
     """
     batch_size, seq_len, _ = selected_layer.shape
 
-    # Add one dimension for the broadcast on hidden_size
-    attention_mask = attention_mask.float().unsqueeze(-1)  # (batch_size, seq_len, 1)
-
     # Move to device 
     attention_mask = attention_mask.to(selected_layer.device)
 
@@ -424,6 +445,8 @@ def extract_token_activations(
     # Apply mask and compute aggregation 
     # =======================================
     elif mode == "average":
+        # Add one dimension for the broadcast on hidden_size
+        attention_mask = attention_mask.float().unsqueeze(-1)  # (batch_size, seq_len, 1)
         # Apply the mask to the activations: zero out tokens outside the target interval
         masked = selected_layer * attention_mask
         #  Count the number of selected tokens for each sequence (avoid division by zero with clamp)
@@ -433,6 +456,8 @@ def extract_token_activations(
         aggregated_tokens =  avg
 
     elif mode == "max":
+        # Add one dimension for the broadcast on hidden_size
+        attention_mask = attention_mask.float().unsqueeze(-1)  # (batch_size, seq_len, 1)
         #  Apply the mask to the activations: zero out tokens outside the target interval
         masked = selected_layer * attention_mask.float()
         #  Replace padding with -inf to exclude from max calculation
