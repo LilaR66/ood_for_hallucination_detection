@@ -29,7 +29,7 @@ from typing import Dict, List, Any, Callable, Tuple, Union, Literal
 import time
 
 from src.evaluation.similarity_metrics import rouge_l_simScore, sentence_bert_simScore
-from src.data_reader.pickle_io import append_to_pickle
+from src.data_reader.pickle_io import save_batch_pickle
 from src.inference.activation_utils import compute_offset_attention_mask
 
 # Specific to Llama tokenizer: 
@@ -510,13 +510,14 @@ def run_filter_generated_answers_by_similarity(
     batch_size: int = 4,
     idx_start_sample: int = 0,
     max_samples: int = 1000,
-    output_path: str = "outputs/all_batch_results.pkl",
+    output_path: str = "outputs/all_batch_results",
     build_prompt_fn: Callable[[str, str], str] = None,
 ) -> None:
     """
     Generates answers in batch using a decoder-only language model, evaluates their semantic 
-    similarity against ground-truth answers using ROUGE-L and SBERT, and stores the results
-    to a pickle file.
+    similarity against ground-truth answers using ROUGE-L and SBERT.
+    The results are saved as individual batch files in a specified pickle directory, 
+    allowing efficient incremental storage and later aggregation.
 
     An answer is considered correct if:
         - ROUGE-L ≥ 0.5, or
@@ -537,7 +538,7 @@ def run_filter_generated_answers_by_similarity(
     max_samples : int
         Total number of examples to process from the dataset, starting from idx_start_sample. 
     output_path : str
-        Path to the pickle file for saving intermediate results.
+        Path to the directory where extracted answers will be saved as individual pickle batch files.
     build_prompt_fn : Callable
         Function to build a prompt from context and question.
     """
@@ -609,11 +610,9 @@ def run_filter_generated_answers_by_similarity(
             "is_correct": batch_is_correct,
             "sbert_scores": batch_sbert_scores,
             "rouge_scores": batch_rouge_scores,
-            "activations": [None] * len(batch_answers) 
-            # empty list for 'activations' to be consistent with `append_to_pickle`
         }
-        
-        append_to_pickle(output_path, batch_results)
+         
+        save_batch_pickle(batch_data=batch_results, output_dir=output_path, batch_idx=i)
    
 
 
@@ -625,7 +624,7 @@ def run_prompt_activation_extraction(
     idx_start_sample: int = 0,
     max_samples: int = 1000,
     save_to_pkl: bool = False,
-    output_path: str = "outputs/all_batch_results.pkl",
+    output_path: str = "outputs/all_batch_results",
     build_prompt_fn: Callable[[str, str], str] = None,
     register_forward_activation_hook_fn: Callable = None,
     layer_idx: int = -1,  
@@ -639,7 +638,9 @@ def run_prompt_activation_extraction(
     (from the prompt only) from a specified transformer layer.
 
     Hidden states are captured via a forward hook during a single forward pass.
-    These representations can be saved to a pickle file or returned directly.
+    These activations are saved as individual batch files in a specified pickle directory, 
+    allowing efficient incremental storage and later aggregation.
+    Alternatively, the representations can be returned directly.
 
     Parameters
     ----------
@@ -659,7 +660,7 @@ def run_prompt_activation_extraction(
         If True, activations are appended to the pickle file at output_path.
         If False, the function returns a list of activations.
     output_path : str
-        Path to the pickle file for saving intermediate results.
+        Path to the directory where extracted answers will be saved as individual pickle batch files.
     build_prompt_fn : Callable
         Function to build a prompt from context and question.
     register_forward_activation_hook_fn : Callable
@@ -743,7 +744,7 @@ def run_prompt_activation_extraction(
         # ==============================
         # Store results (to file or memory)
         # ==============================
-        activations = [selected_token_vecs[j].unsqueeze(0).cpu() for j in range(selected_token_vecs.size(0))]
+        activations = [selected_token_vecs[j].unsqueeze(0).cpu().numpy() for j in range(selected_token_vecs.size(0))]
         batch_dataset_ids = [s['id'] for s in batch]
         batch_dataset_original_idx = [s['original_index'] for s in batch]
         
@@ -754,7 +755,8 @@ def run_prompt_activation_extraction(
         }
 
         if save_to_pkl:
-            append_to_pickle(output_path, batch_results)
+            #append_to_pickle(output_path, batch_results)
+            save_batch_pickle(batch_data=batch_results, output_dir=output_path, batch_idx=i)
         else:
             batch_activations.extend(activations)
         
@@ -788,8 +790,10 @@ def run_prompt_and_generation_activation_extraction(
     from a specified transformer layer.
 
     Hidden states are captured via a forward hook during generation, then aligned and 
-    filtered using attention masks. These representations can be saved to a pickle file 
-    or returned directly.
+    filtered using attention masks. 
+    These activations are saved as individual batch files in a specified pickle directory, 
+    allowing efficient incremental storage and later aggregation.
+    Alternatively, the representations can be returned directly.
 
     Parameters
     ----------
@@ -809,7 +813,7 @@ def run_prompt_and_generation_activation_extraction(
         If True, activations are appended to the pickle file at output_path.
         If False, the function returns a list of activations.
     output_path : str
-        Path to the pickle file for saving intermediate results.
+        Path to the directory where extracted answers will be saved as individual pickle batch files.
     build_prompt_fn : Callable
         Function to build a prompt from context and question.
     register_generation_activation_hook_fn : Callable
@@ -1065,7 +1069,7 @@ def run_prompt_and_generation_activation_extraction(
         # ==============================
         # Store results (to file or memory)
         # ==============================
-        activations = [selected_token_vecs[j].unsqueeze(0).cpu() for j in range(selected_token_vecs.size(0))]
+        activations = [selected_token_vecs[j].unsqueeze(0).cpu().numpy() for j in range(selected_token_vecs.size(0))]
 
         batch_dataset_ids = [s['id'] for s in batch]
         batch_dataset_original_idx = [s['original_index'] for s in batch]
@@ -1077,7 +1081,8 @@ def run_prompt_and_generation_activation_extraction(
         }
 
         if save_to_pkl:
-            append_to_pickle(output_path, batch_results)
+            #append_to_pickle(output_path, batch_results)
+            save_batch_pickle(batch_data=batch_results, output_dir=output_path, batch_idx=i)
         else:
             batch_activations.extend(activations)
         

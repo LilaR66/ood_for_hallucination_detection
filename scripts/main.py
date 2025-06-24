@@ -26,6 +26,7 @@ Outputs:
 # ====================================
 import sys
 import os
+import gc
 import torch
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(project_root)
@@ -57,14 +58,16 @@ from src.inference.activation_utils import (
     extract_token_activations
 )
 
-from src.data_reader.pickle_io import load_pickle_batches
+from src.data_reader.pickle_io import merge_batches_and_cleanup, load_pickle_batches
 from src.utils.general import filter_correct_entries
+
 # ====================================
 #  Define funtions 
 # ====================================
 def clear_cache():
     torch.cuda.empty_cache()
     torch.cuda.ipc_collect()
+    gc.collect()
 
 
 def prepare_fit_dataset(
@@ -184,7 +187,7 @@ def run_filter_generated_answers_by_similarity_pipeline(
     seed : int
         Random seed for reproducibility.
     output_path : str
-        Path to save the extracted answers as a pickle file.
+        Path to the directory where extracted answers will be saved as individual pickle batch files.
     save_dataset_path : str
         Path to save the new created dataset containing only correct answers.
     shuffle : bool
@@ -227,16 +230,21 @@ def run_filter_generated_answers_by_similarity_pipeline(
     print("...end!")
     print_time_elapsed(t0, t1, label="ID answers: ")
 
+    # Merge all batches, save as a single file and delete batch directory
+    merged = merge_batches_and_cleanup(directory=output_path, delete=True, confirm=True) 
+
     # Load ID responses and only keep correct entries 
     # -----------------------------------
     # Load extracted answers 
-    id_fit_answers = load_pickle_batches(output_path)
+    id_fit_answers = load_pickle_batches(output_path + ".pkl")
     # Only keep rows where the generated responses are similar to the ground-truth answers
     ids_correct_answers = filter_correct_entries(id_fit_answers)["id"]
     # Create a new dataset contaning only the correct answers 
     id_fit_correct_dataset =  id_fit_dataset.filter_by_column('id', ids_correct_answers)
     # Save the new correct dataset for later use
     id_fit_correct_dataset.save(save_dataset_path) 
+    # Free memory
+    del model, tokenizer, merged, id_fit_answers, ids_correct_answers, id_fit_correct_dataset
 
 
 def retrieve_fit_inputs_embeddings_pipeline(
@@ -263,7 +271,7 @@ def retrieve_fit_inputs_embeddings_pipeline(
     seed : int
         Random seed for reproducibility.
     output_path : str
-        Path to save the extracted embeddings as a pickle file.
+        Path to the directory where extracted answers will be saved as individual pickle batch files.
     custom_dataset_path : str
         Path to a custom dataset to extract token embeddings. 
         If None, the default dataset is loaded with prepare_fit_dataset() 
@@ -328,8 +336,11 @@ def retrieve_fit_inputs_embeddings_pipeline(
     print("...end!")
     print_time_elapsed(t0, t1, label="ID embeddings: ")
 
+    # Merge all batches, save as a single file and delete batch directory
+    merged = merge_batches_and_cleanup(directory=output_path, delete=True, confirm=True) 
+
     # Free memory
-    del id_fit_dataset
+    del id_fit_dataset, model, tokenizer, merged, 
 
 
 def retrieve_test_inputs_embeddings_pipeline(
@@ -355,9 +366,9 @@ def retrieve_test_inputs_embeddings_pipeline(
     model_name : str
         Name or path of the pretrained Llama model to load.
     id_output_path : str
-        Path to save the ID test embeddings as a pickle file.
+        Path to the directory where ID test embeddings will be saved as individual pickle batch files.
     od_output_path : str
-        Path to save the OOD test embeddings as a pickle file.
+        Path to the directory where OOD test embeddings will be saved as individual pickle batch files.
     seed : int
         Random seed for reproducibility.
     shuffle : bool
@@ -439,9 +450,12 @@ def retrieve_test_inputs_embeddings_pipeline(
     print("end!")
     print_time_elapsed(t4, t5, label="Possible test embeddings: ")
 
+    # Merge all batches, save as a single file and delete batch directory
+    od_merged = merge_batches_and_cleanup(directory=od_output_path, delete=True, confirm=True) 
+    id_merged = merge_batches_and_cleanup(directory=id_output_path, delete=True, confirm=True) 
+
     # Free memory
-    del od_test_dataset
-    del id_test_dataset
+    del od_test_dataset, id_test_dataset, model, tokenizer, od_merged, id_merged
 
 
 def retrieve_fit_answers_embeddings_pipeline(
@@ -471,7 +485,7 @@ def retrieve_fit_answers_embeddings_pipeline(
     seed : int
         Random seed for reproducibility.
     output_path : str
-        Path to save the extracted embeddings as a pickle file.
+        Path to the directory where extracted answers will be saved as individual pickle batch files
     custom_dataset_path : str
         Path to a custom dataset to extract token embeddings. 
         If None, the default dataset is loaded.
@@ -543,8 +557,12 @@ def retrieve_fit_answers_embeddings_pipeline(
     print("...end!")
     print_time_elapsed(t0, t1, label="ID embeddings: ")
 
+    # Merge all batches, save as a single file and delete batch directory
+    merged = merge_batches_and_cleanup(directory=output_path, delete=True, confirm=True) 
+
     # Free memory
-    del id_fit_dataset
+    del id_fit_dataset, model, tokenizer, merged
+
 
 
 def retrieve_test_answers_embeddings_pipeline(
@@ -572,9 +590,9 @@ def retrieve_test_answers_embeddings_pipeline(
     model_name : str
         Name or path of the pretrained Llama model to load.
     id_output_path : str
-        Path to save the ID test embeddings as a pickle file.
+        Path to the directory where ID test embeddings will be saved as individual pickle batch files.
     od_output_path : str
-        Path to save the OOD test embeddings as a pickle file.
+        Path to the directory where OOD test embeddings will be saved as individual pickle batch files.
     seed : int
         Random seed for reproducibility.
     shuffle : bool
@@ -667,27 +685,31 @@ def retrieve_test_answers_embeddings_pipeline(
     print("end!")
     print_time_elapsed(t4, t5, label="Possible test embeddings: ")
 
+     # Merge all batches, save as a single file and delete batch directory
+    od_merged = merge_batches_and_cleanup(directory=od_output_path, delete=True, confirm=True) 
+    id_merged = merge_batches_and_cleanup(directory=id_output_path, delete=True, confirm=True) 
+
     # Free memory
-    del od_test_dataset
-    del id_test_dataset
+    del od_test_dataset, id_test_dataset, model, tokenizer, od_merged, id_merged
+
 
 
 # ====================================
 # Global variables  
 # ====================================
-SEED = 44
+SEED = 777 #44
 BATCH_SIZE = 16 #32
 MODEL_NAME = "meta-llama/Llama-2-7b-chat-hf"
 OUTPUT_DIR = "../results/raw/analyse_answers/"
 PLOT_DIR   = "../results/figures/analyse_answers/"
 K_BEAMS = 1 #3
-ACTIVATION_SOURCE = "promptGeneration" # can be 'Generation', 'Prompt', 'PromptGeneration'
+ACTIVATION_SOURCE = "generation" # can be 'generation', 'prompt', 'PromptGeneration'
 START_OFFSET = 0 #40
 END_OFFSET = 0   #-4
 
 
-LAYER_LIST = [-1, 16]  # integer
-TOKENS_LIST = ["-1", "Avg", "Max"]  # string
+LAYER_LIST = [-1 , 16]  # integer
+TOKENS_LIST = ["0" , "-1", "Avg", "Max",]  # string
 
 # ====================================
 # Main function 
@@ -696,11 +718,27 @@ def main() -> None:
     """
     Main entry point for the embedding extraction pipeline.
     """
+
+    if False:
+        clear_cache()
+        run_filter_generated_answers_by_similarity_pipeline(
+            model_name=MODEL_NAME,
+            seed=SEED,
+            output_path=OUTPUT_DIR + f"id_fit_results_answers",
+            save_dataset_path="../data/datasets/id_fit_correct_dataset.pkl",
+            shuffle=True,
+            select_slice=(0,10_000),
+            batch_size=BATCH_SIZE,
+            build_prompt_fn=build_prompt
+        )
+
     for LAYER in LAYER_LIST:
         for TOKENS in TOKENS_LIST:
 
             # Select function to extract token embeddings
-            if TOKENS=="-1":
+            if TOKENS=="0":
+                EXTRACTION_MODE = "first_generated"
+            elif TOKENS=="-1":
                 EXTRACTION_MODE = "last"
             elif TOKENS=="Avg":
                 EXTRACTION_MODE = "average"
@@ -713,27 +751,14 @@ def main() -> None:
             print(f"\n\n===========================================================")
             print(f"Processing OUTPUT_PROMPT_TITLE : {OUTPUT_PROMPT_TITLE}")
             print(f"           OUTPUT_GEN_TITLE    : {OUTPUT_GEN_TITLE}")
-            print(f"\n\n===========================================================")
+            print(f"===========================================================\n\n")
 
-            if False:
-                clear_cache()
-                run_filter_generated_answers_by_similarity_pipeline(
-                    model_name=MODEL_NAME,
-                    seed=SEED,
-                    output_path=OUTPUT_DIR + f"id_fit_results_answers.pkl",
-                    save_dataset_path="../data/datasets/id_fit_correct_dataset.pkl",
-                    shuffle=True,
-                    select_slice=(0,10_000),
-                    batch_size=BATCH_SIZE,
-                    build_prompt_fn=build_prompt
-                )
-
-            if False:
+            if True:
                 clear_cache()
                 retrieve_fit_inputs_embeddings_pipeline(
                     model_name=MODEL_NAME,
                     seed=SEED,
-                    output_path=f"{OUTPUT_DIR}id_fit_results{OUTPUT_PROMPT_TITLE}.pkl",
+                    output_path=f"{OUTPUT_DIR}id_fit_results{OUTPUT_PROMPT_TITLE}",
                     custom_dataset_path="../data/datasets/id_fit_correct_dataset.pkl",
                     shuffle=True,
                     select_slice=(0,10_000),
@@ -746,13 +771,13 @@ def main() -> None:
                 )
 
 
-            if False: 
+            if True: 
                 clear_cache()
                 retrieve_test_inputs_embeddings_pipeline(
                     model_name=MODEL_NAME,
                     seed=SEED,
-                    id_output_path=f"{OUTPUT_DIR}id_test_results{OUTPUT_PROMPT_TITLE}.pkl",
-                    od_output_path=f"{OUTPUT_DIR}od_test_results{OUTPUT_PROMPT_TITLE}.pkl",
+                    id_output_path=f"{OUTPUT_DIR}id_test_results{OUTPUT_PROMPT_TITLE}",
+                    od_output_path=f"{OUTPUT_DIR}od_test_results{OUTPUT_PROMPT_TITLE}",
                     shuffle=True,
                     select_slice=(0,1000),
                     batch_size=BATCH_SIZE,
@@ -764,12 +789,12 @@ def main() -> None:
                 )
 
 
-            if False:
+            if True:
                 clear_cache()
                 retrieve_fit_answers_embeddings_pipeline(
                     model_name=MODEL_NAME,
                     seed=SEED,
-                    output_path=f"{OUTPUT_DIR}id_fit_results{OUTPUT_GEN_TITLE}.pkl",
+                    output_path=f"{OUTPUT_DIR}id_fit_results{OUTPUT_GEN_TITLE}",
                     custom_dataset_path="../data/datasets/id_fit_correct_dataset.pkl",
                     shuffle=True,
                     select_slice=(0,10_000),
@@ -784,13 +809,13 @@ def main() -> None:
                 )
 
             
-            if False:
+            if True:
                 clear_cache()
                 retrieve_test_answers_embeddings_pipeline(
                     model_name=MODEL_NAME,
                     seed=SEED,
-                    id_output_path=f"{OUTPUT_DIR}id_test_results{OUTPUT_GEN_TITLE}.pkl",
-                    od_output_path=f"{OUTPUT_DIR}od_test_results{OUTPUT_GEN_TITLE}.pkl",
+                    id_output_path=f"{OUTPUT_DIR}id_test_results{OUTPUT_GEN_TITLE}",
+                    od_output_path=f"{OUTPUT_DIR}od_test_results{OUTPUT_GEN_TITLE}",
                     shuffle=True,
                     select_slice=(0,1000),
                     batch_size=BATCH_SIZE,
@@ -805,30 +830,31 @@ def main() -> None:
 
             
             # Evil Code for squatting on deel machines 
-            # during the home-IRT commute (｀∀´)Ψ
-            import time
-            try:
-                while True: 
-                    clear_cache()
-                    OUTPUT_DIR = "../results/raw/TEST/"
-                    print("Infinite loop.")
-                    retrieve_test_inputs_embeddings_pipeline(
-                        model_name=MODEL_NAME,
-                        seed=SEED,
-                        id_output_path=f"{OUTPUT_DIR}id_test_results{OUTPUT_PROMPT_TITLE}.pkl",
-                        od_output_path=f"{OUTPUT_DIR}od_test_results{OUTPUT_PROMPT_TITLE}.pkl",
-                        shuffle=True,
-                        select_slice=(0,100), #(0,1000),
-                        batch_size=BATCH_SIZE,
-                        build_prompt_fn=build_prompt,
-                        layer_idx=LAYER,
-                        extract_token_activations_fn=partial(extract_token_activations, mode=EXTRACTION_MODE),
-                        start_offset=START_OFFSET,
-                        end_offset=END_OFFSET
-                    )
-                    time.sleep(120)  # Pause after execution
-            except KeyboardInterrupt:
-                print("Stop of the infinite loop.")
+            # (｀∀´)Ψ mouahahah
+            if False:
+                import time
+                try:
+                    while True: 
+                        clear_cache()
+                        #OUTPUT_DIR = "../results/raw/TEST/"
+                        print("Infinite loop.")
+                        retrieve_test_inputs_embeddings_pipeline(
+                            model_name=MODEL_NAME,
+                            seed=SEED,
+                            id_output_path=f"{OUTPUT_DIR}id_test_results{OUTPUT_PROMPT_TITLE}",
+                            od_output_path=f"{OUTPUT_DIR}od_test_results{OUTPUT_PROMPT_TITLE}",
+                            shuffle=True,
+                            select_slice=(0,100), #(0,1000),
+                            batch_size=BATCH_SIZE,
+                            build_prompt_fn=build_prompt,
+                            layer_idx=LAYER,
+                            extract_token_activations_fn=partial(extract_token_activations, mode=EXTRACTION_MODE),
+                            start_offset=START_OFFSET,
+                            end_offset=END_OFFSET
+                        )
+                        time.sleep(120)  # Pause after execution
+                except KeyboardInterrupt:
+                    print("Stop of the infinite loop.")
 
 
 
