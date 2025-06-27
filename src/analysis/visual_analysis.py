@@ -12,6 +12,7 @@ import plotly.graph_objects as go
 import umap.umap_ as umap
 
 
+
 def compute_auroc(
     scores_id: np.ndarray,
     scores_ood: np.ndarray,
@@ -103,14 +104,14 @@ def compute_auroc(
 def plot_score_distributions(
     scores_id: np.ndarray,
     scores_ood: np.ndarray,
-    bins: int = 50,
-    xlabel: str = "Distance to k-th NN",
-    title: str = "Distribution of DKNN Scores",
+    xlabel: str = "Score",
+    title: str = "Distribution of ID and OOD scores",
     figsize: Tuple[int, int] = (10, 6),
     save_path: str = None,
+    bandwidth: float = 1.0
 ) -> plt.Figure:
     """
-    Plot overlapping histograms of ID and OOD scores to compare their distributions.
+    Plot smoothed KDE distributions for ID and OOD scores with vertical mean lines and color-coded legend.
 
     Parameters
     ----------
@@ -118,50 +119,51 @@ def plot_score_distributions(
         Scores for in-distribution samples
     scores_ood : np.ndarray
         Scores for out-of-distribution samples
-    bins : int, optional (default=50)
-        Number of histogram bins
-    xlabel : str, optional
-        Label for x-axis
-    title : str, optional
+    xlabel : str
+        X-axis label
+    title : str
         Plot title
-    figsize : Tuple[int, int], optional
+    figsize : Tuple[int, int]
         Figure size
-    save_path : str, optional
-        If provided, the plot will be saved to this path (e.g. "plot.png")
+    save_path : str
+        If set, saves the figure to this path
+    bandwidth : float
+        Bandwidth adjustment for KDE smoothing
 
     Returns
     -------
     plt.Figure
-        Matplotlib figure object
+        The Matplotlib figure
     """
     plt.figure(figsize=figsize)
-    
-    # Plot histograms with transparency
-    plt.hist(scores_id, bins=bins, alpha=0.5, label="ID", density=True, color="blue")
-    plt.hist(scores_ood, bins=bins, alpha=0.5, label="OOD", density=True, color="red")
-    
-    # Add labels and styling
+
+    # Define colors
+    color_id = "#1f77b4"    # blue
+    color_ood = "#ff7f0e"   # orange
+
+    # KDE curves
+    sns.kdeplot(scores_id, label="ID", fill=True, linewidth=2, bw_adjust=bandwidth, color=color_id)
+    sns.kdeplot(scores_ood, label="OOD", fill=True, linewidth=2, bw_adjust=bandwidth, color=color_ood)
+
+    # Compute statistics
+    id_mean, id_std = scores_id.mean(), scores_id.std()
+    ood_mean, ood_std = scores_ood.mean(), scores_ood.std()
+
+    # Vertical mean lines
+    plt.axvline(id_mean, color=color_id, linestyle="--", linewidth=1.5, label=f"ID mean: {id_mean:.2f} ± {id_std:.2f}")
+    plt.axvline(ood_mean, color=color_ood, linestyle="--", linewidth=1.5, label=f"OOD mean: {ood_mean:.2f} ± {ood_std:.2f}")
+
+    # Labels and formatting
     plt.xlabel(xlabel, fontsize=12)
     plt.ylabel("Density", fontsize=12)
     plt.title(title, fontsize=14)
+    plt.grid(True, linestyle="--", alpha=0.6)
     plt.legend(loc="upper right")
-    plt.grid(True, linestyle="--", alpha=0.7)
-    
-    # Add text box with summary stats
-    stats_text = (f"ID mean: {scores_id.mean():.2f} ± {scores_id.std():.2f}\n"
-                  f"OOD mean: {scores_ood.mean():.2f} ± {scores_ood.std():.2f}")
-    plt.gca().text(
-        0.0, 0.95, stats_text,
-        transform=plt.gca().transAxes,
-        verticalalignment="top",
-        horizontalalignment="left",
-        bbox=dict(boxstyle="round", alpha=0.2, facecolor="w")
-    )
+
     if save_path:
-        plt.savefig(save_path, bbox_inches='tight')
+        plt.savefig(save_path, bbox_inches="tight")
 
     plt.show()
-    #return plt.gcf() # return figure if needed
 
 
 def compute_confusion_matrix(
@@ -435,7 +437,8 @@ def plot_dim_reduction_3d_embeddings(
         if 'random_state' not in tsne_params:
             tsne_params['random_state'] = random_state
         if 'init' not in tsne_params:
-            tsne_params['init'] = 'pca'
+            # a PCA init in t-SNE is not the same as doing a complete PCA before launching t-SNE.
+            tsne_params['init'] = 'pca' 
         # If PCA is present, use its output, else use standardized embeddings
         tsne_input = data_pca if (data_pca is not None and data_pca.shape[1] >= tsne_params.get('n_components', 3)) else all_embeddings_scaled
         tsne = TSNE(**tsne_params)

@@ -703,7 +703,7 @@ MODEL_NAME = "meta-llama/Llama-2-7b-chat-hf"
 OUTPUT_DIR = "../results/raw/analyse_answers/"
 PLOT_DIR   = "../results/figures/analyse_answers/"
 K_BEAMS = 1 #3
-ACTIVATION_SOURCE = "generation" # can be 'generation', 'prompt', 'PromptGeneration'
+ACTIVATION_SOURCE = "promptGeneration" # can be 'generation', 'prompt', 'promptGeneration'
 START_OFFSET = 0 #40
 END_OFFSET = 0   #-4
 
@@ -753,7 +753,7 @@ def main() -> None:
             print(f"           OUTPUT_GEN_TITLE    : {OUTPUT_GEN_TITLE}")
             print(f"===========================================================\n\n")
 
-            if True:
+            if False:
                 clear_cache()
                 retrieve_fit_inputs_embeddings_pipeline(
                     model_name=MODEL_NAME,
@@ -771,7 +771,7 @@ def main() -> None:
                 )
 
 
-            if True: 
+            if False: 
                 clear_cache()
                 retrieve_test_inputs_embeddings_pipeline(
                     model_name=MODEL_NAME,

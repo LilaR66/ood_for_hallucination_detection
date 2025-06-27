@@ -1,30 +1,47 @@
 #!/usr/bin/env python3
+"""
+============================================================
+DKNN-Based OOD Detection with FAISS and L2-Normalized Embeddings
+============================================================
+
+This module implements utilities for out-of-distribution (OOD) detection using
+Deep k-Nearest Neighbors (DKNN) over embedding spaces. It relies on FAISS for
+fast nearest neighbor search and L2-normalized representations to approximate
+cosine similarity.
+
+The DKNN method scores test samples based on their distance to the in-distribution
+(ID) training set in feature space. Specifically, the distance to the k-th nearest
+neighbor serves as an OOD score.
+
+************************************************************
+A high DeepKNN score (distance to k-th NN) => OOD data (far from ID neighbors)
+A low DeepKNN score                        => ID data (close to ID neighbors)
+************************************************************
+
+Main Features
+-------------
+- L2-normalizes ID and test embeddings to enable cosine-based comparison
+- Constructs a FAISS index for efficient k-NN search over ID embeddings
+- Computes DKNN scores as distance to the k-th nearest neighbor
+- Supports batched scoring for memory efficiency on large test sets
+- Compatible with GPU acceleration via FAISS
+
+Intended Use
+------------
+This method assumes that test and ID embeddings are from the same feature space
+(e.g., from a pretrained encoder), and that proximity in this space reflects
+semantic similarity. High DKNN scores suggest out-of-distribution behavior.
+"""
 
 import torch
 import numpy as np
 # if you have cuda version 12:
 # uv pip install faiss-gpu-cu12
 import faiss 
+from src.analysis.analysis_utils import l2_normalize
 
 
-# **Note:** If we use an L2 FAISS index on normalized vectors, 
-# the Euclidean distance becomes equivalent to the cosine 
-# distance (because the norm of the vectors is 1).
-def l2_normalize(feat: np.ndarray) -> np.ndarray:
-    """
-    L2 normalization of a tensor along the last dimension.
-
-    Args:
-        feat (np.ndarray): the tensor to normalize
-
-    Returns:
-        np.ndarray: the normalized tensor
-    """
-    return feat / (np.linalg.norm(feat, ord=2, axis=-1, keepdims=True) + 1e-10)
-
-
-
-def fit_to_dataset(fit_embeddings: torch.tensor, use_gpu: bool = True) -> faiss.Index:
+def fit_to_dataset(fit_embeddings: torch.tensor) -> faiss.Index:
     """
     Constructs the FAISS index from ID data.
 
@@ -32,8 +49,6 @@ def fit_to_dataset(fit_embeddings: torch.tensor, use_gpu: bool = True) -> faiss.
     ----------
     fit_embeddings : torch.tensor
         ID embeddings, shape (N, D)
-    use_gpu : bool
-        Whether to use GPU acceleration for FAISS
 
     Returns
     -------
@@ -47,6 +62,7 @@ def fit_to_dataset(fit_embeddings: torch.tensor, use_gpu: bool = True) -> faiss.
     cpu_index = faiss.IndexFlatL2(dim) # Create a flat L2 index (exact search, not approximate)
 
     # If GPU requested, move index to GPU
+    use_gpu = torch.cuda.is_available()
     if use_gpu:
         res = faiss.StandardGpuResources() # Allocate GPU memory
         index = faiss.index_cpu_to_gpu(res, 0, cpu_index) # Move index to GPU
