@@ -20,31 +20,38 @@ def seed_all(seed: int = 44) -> None:
     set_seed(seed) # Deterministic HuggingFace .generate() calls
 
 
-def filter_correct_entries(data: dict) -> dict:
+def filter_entries(data: dict, column: str, value=1) -> dict:
     """
-    Filter a result dictionary to keep only entries where is_correct == 1.
+    Filter a result dictionary to keep only entries where the specified 
+    column equals a given value.
 
     Parameters
     ----------
     data : dict
         Dictionary with keys like 'id', 'gen_answers', 'is_correct', etc.
+    column : str
+        The key of the column to filter on (e.g., 'is_correct', 'is_unanswerable').
+    value : any, optional (default=1)
+        The value to keep in the specified column. Only entries where 
+        data[column][i] == value are kept.
 
     Returns
     -------
     dict
-        Filtered dictionary with only correct entries.
+        Filtered dictionary with only the selected entries.
+
     """
     # Compute size before filtering
-    original_size = len(data['is_correct'])
+    original_size = len(data[column])
     # Find indices to keep
-    keep_indices = [i for i, ok in enumerate(data['is_correct']) if ok == 1]
+    keep_indices = [i for i, val in enumerate(data[column]) if val == value]
     # Filter the dictionary
     filtered_data = {
         key: [values[i] for i in keep_indices]
         for key, values in data.items()
     }
     # Compute and print size after filtering
-    filtered_size = len(filtered_data['is_correct'])
+    filtered_size = len(filtered_data[column])
     # Display information
-    print(f"Size before filtering incorrect samples: {original_size}.\nSize after filtering: {filtered_size}. Filtered {original_size - filtered_size} samples.")
+    print(f"Size before filtering: {original_size}. Size after filtering: {filtered_size}. Filtered {original_size - filtered_size} samples.")
     return filtered_data

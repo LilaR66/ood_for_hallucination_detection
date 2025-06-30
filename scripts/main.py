@@ -59,7 +59,7 @@ from src.inference.activation_utils import (
 )
 
 from src.data_reader.pickle_io import merge_batches_and_cleanup, load_pickle_batches
-from src.utils.general import filter_correct_entries
+from src.utils.general import filter_entries
 
 # ====================================
 #  Define funtions 
@@ -238,7 +238,7 @@ def run_filter_generated_answers_by_similarity_pipeline(
     # Load extracted answers 
     id_fit_answers = load_pickle_batches(output_path + ".pkl")
     # Only keep rows where the generated responses are similar to the ground-truth answers
-    ids_correct_answers = filter_correct_entries(id_fit_answers)["id"]
+    ids_correct_answers = filter_entries(id_fit_answers, column='is_correct', value=1)["id"]
     # Create a new dataset contaning only the correct answers 
     id_fit_correct_dataset =  id_fit_dataset.filter_by_column('id', ids_correct_answers)
     # Save the new correct dataset for later use
