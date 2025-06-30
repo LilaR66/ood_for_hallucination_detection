@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
 
 import numpy as np
-from sklearn.metrics import roc_curve, roc_auc_score,  confusion_matrix
+from sklearn.metrics import (
+    roc_curve, 
+    roc_auc_score,  
+    confusion_matrix,  
+    precision_recall_curve, 
+    average_precision_score
+)
 import seaborn as sns
 import matplotlib.pyplot as plt
 from typing import Tuple
@@ -18,15 +24,29 @@ def compute_auroc(
     scores_ood: np.ndarray,
     plot: bool = False,
     save_path: str = None,
-) -> Tuple[float, np.ndarray, np.ndarray, np.ndarray, float]:
+) -> Tuple[float, float, float, np.ndarray, np.ndarray, np.ndarray, float]:
     """
-    Compute the Area Under the ROC Curve (auROC) for OOD detection using scores.
+    Compute the Area Under the ROC Curve (auROC), FPR95, and AUC-PR for OOD 
+    detection using scores.
 
     This function:
     - Concatenates the scores from ID and OOD samples,
     - Assigns binary labels (0 for ID, 1 for OOD)
-    - Computes the ROC curve and auROC and optionally plots the ROC curve
+    - Computes auROC, FPR95, and AUC-PR and optionally plots the ROC curve 
     - Determines the optimal threshold using Youden's J statistic. 
+
+     Metrics:
+    --------
+    auROC (Area Under the ROC Curve): 
+        A global measure of the model's ability to distinguish between two classes (ID vs OOD)
+        across all possible thresholds. The closer to 1, the better the separation.
+    FPR95 (False Positive Rate at 95% TPR): 
+        The false positive rate when the true positive rate reaches 95%. Indicates the proportion 
+        of ID samples incorrectly classified as OOD when 95% of OOD samples are correctly detected.
+    AUC-PR (Area Under the Precision-Recall Curve): 
+        The area under the precision-recall curve, which is especially useful for evaluating model
+        performance on imbalanced datasets. Higher values indicate better ability to identify OOD 
+        among ID samples.
 
     Parameters
     ----------
@@ -43,6 +63,10 @@ def compute_auroc(
     -------
     auroc : float
         Area under the ROC curve.
+    fpr95 : float
+        False positive rate when TPR is closest to 95%.
+    auc_pr : float
+        Area under the precision-recall curve (AUC-PR).
     fpr : np.ndarray
         False positive rates at different thresholds.
     tpr : np.ndarray
@@ -53,7 +77,7 @@ def compute_auroc(
         Optimal threshold according to Youden's J statistic.
         Samples with score <= threshold are classified as ID,
         samples with score > threshold are classified as OOD.
-        
+
     Notes
     -----
     Youden's J statistic looks for the optimal point on the ROC curve, where :
@@ -78,7 +102,19 @@ def compute_auroc(
     best_index = np.argmax(j_scores)
     youden_threshold = thresholds[best_index]
 
+    # Compute FPR95
+    # Find the threshold where TPR is closest to 0.95
+    tpr_95_idx = np.argmin(np.abs(tpr - 0.95))
+    fpr95 = fpr[tpr_95_idx]
+
+    # Compute Precision-Recall curve and AUC-PR
+    precision, recall, _ = precision_recall_curve(all_labels, all_scores)
+    auc_pr = average_precision_score(all_labels, all_scores)
+
+    # Display results
     print(f"auROC: {auroc:.4f}")
+    print(f"FPR95: {fpr95:.4f}")
+    print(f"AUC-PR: {auc_pr:.4f}")
     print(f"Optimal Threshold (Youden's J statistic): {youden_threshold:.4f}")
 
     # Optionally plot the ROC curve
@@ -97,7 +133,7 @@ def compute_auroc(
         else:
             plt.close()
 
-    return auroc, fpr, tpr, thresholds, youden_threshold
+    return auroc, fpr95, auc_pr, fpr, tpr, thresholds, youden_threshold
 
 
 
