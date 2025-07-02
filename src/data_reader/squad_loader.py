@@ -122,7 +122,7 @@ class SquadDataset:
         """
         return self.dataset.to_dict()
 
-    def slice(self, idx_start, idx_end):
+    def slice(self, idx_start: int, idx_end: int = None):
         """
         Select a range of rows from the dataset.
 
@@ -131,12 +131,21 @@ class SquadDataset:
         idx_start : int
             Start index (inclusive)
         idx_end : int
-            End index (exclusive)
+            End index (exclusive). If None, selects until the end of the dataset.
 
         Returns
         -------
         SquadDataset
         """
+        dataset_len = len(self.dataset)
+        if idx_end is None:
+            idx_end = dataset_len
+        idx_start = max(0, idx_start)
+        idx_end = min(dataset_len, idx_end)
+        if idx_start >= idx_end:
+            self.dataset = self.dataset.select([])
+            print("Return empty dataset")
+            return self 
         indices = list(range(idx_start, idx_end))
         self.dataset = self.dataset.select(indices)
         return self
