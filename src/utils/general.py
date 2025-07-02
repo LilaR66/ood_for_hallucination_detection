@@ -55,3 +55,32 @@ def filter_entries(data: dict, column: str, value=1) -> dict:
     # Display information
     print(f"Size before filtering: {original_size}. Size after filtering: {filtered_size}. Filtered {original_size - filtered_size} samples.")
     return filtered_data
+
+
+def add_unanswerable_flag(data: dict) -> dict:
+    """
+    Add a boolean column 'is_unanswerable' indicating if the generated answer 
+    contains the word 'unanswerable' (case-insensitive, anywhere in the string).
+
+    Parameters
+    ----------
+    data : dict
+        Dictionary with at least the key 'gen_answers', which should be a list of strings.
+        Other keys (e.g., 'id') are preserved.
+
+    Returns
+    -------
+    dict
+        A copy of the input dictionary with an additional key 'is_unanswerable',
+        which is a list of booleans corresponding to each answer in 'gen_answers'.
+        True if 'unanswerable' is present in the answer, False otherwise.
+
+    """
+    answers = data.get('gen_answers', [])
+    is_unanswerable = [
+        'unanswerable' in str(ans).lower() for ans in answers
+    ]
+    # Return a new dict with the extra column
+    new_data = dict(data)
+    new_data['is_unanswerable'] = is_unanswerable
+    return new_data

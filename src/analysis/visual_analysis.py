@@ -277,11 +277,108 @@ def compute_confusion_matrix_and_metrics(
         )
         plt.xlabel("Prediction")
         plt.ylabel("Ground Truth")
-        plt.title("Binary Confusion Matrix")
+        title = "Row normalized" if normalize else "Raw"
+        plt.title(f"{title} Confusion Matrix")
         plt.tight_layout()
         plt.show()
 
     return cm, accuracy, f1, precision, recall
+
+
+
+def compute_confusion_matrix_with_attribute_split(
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    attribute: np.ndarray,
+    attr_labels: tuple = ("A", "U"),
+    attr_true_value=True,
+    normalize: bool = True,
+    class_names: list = ["ID", "OOD"]
+):
+    """
+    Plot a confusion matrix (normalized or raw) with an attribute breakdown in each cell.
+
+    Parameters
+    ----------
+    y_true : np.ndarray
+        Ground truth binary labels (e.g. 0 = ID, 1 = OOD)
+    y_pred : np.ndarray
+        Predicted binary labels (e.g. 0 = ID, 1 = OOD)
+    attribute : np.ndarray
+        Array used to split data (e.g. is_unanswerable), must be same length
+    attr_labels : tuple
+        Labels to display for attribute split (default: ("A", "U"))
+    attr_true_value : bool
+        The value in `attribute` that should be associated with the second label in `attr_labels`
+        (i.e., `attr_labels[1]`). All other values will be counted under `attr_labels[0]`.
+    normalize : bool
+        If True, normalize confusion matrix by row
+    class_names : list
+        Class names for rows/columns (e.g. ["ID", "OOD"])
+            class_names[0] => corresponds to class 0
+            class_names[1] => corresponds to class 1
+    """
+
+    # Check consistency
+    assert len(y_true) == len(y_pred) == len(attribute), "All input arrays must be the same length."
+
+    # Raw and normalized confusion matrices
+    cm = confusion_matrix(y_true, y_pred)
+    cm_display = confusion_matrix(y_true, y_pred, normalize="true") if normalize else cm
+
+    # Build annotations with attribute stats
+    annotations = np.empty_like(cm, dtype=object)
+
+    # Loop over true labels (row index in confusion matrix)
+    for i in range(2):  
+        # Mask where true label matches class i (i = true class)
+        true_mask = y_true == i 
+        # Loop over predicted labels (column index in confusion matrix)
+        for j in range(2):  
+            # Mask where pred label matches class j (j = predicted class)
+            pred_mask = y_pred == j 
+            # identify samples classified true=i, pred=j
+            cell_mask = true_mask & pred_mask 
+            # Total number of samples in this cell of the confusion matrix
+            total = np.sum(cell_mask) 
+            if total == 0:
+                # If no data in the cell, leave it empty
+                annotations[i, j] = "" 
+            else:
+                # Count how many of the samples in this cell have attribute == attr_true_value
+                n_attr_true = np.sum(attribute[cell_mask] == attr_true_value)
+                # All others are considered as attr_false
+                n_attr_false = total - n_attr_true
+                # Convert counts to percentages (relative to total cell count)
+                p_attr_true = 100 * n_attr_true / total
+                p_attr_false = 100 * n_attr_false / total
+                # Unpack the attribute labels: first = false group, second = true group
+                label_false, label_true = attr_labels
+                # Value to display: either normalized percentage or raw count
+                val_str = f"{cm_display[i, j]*100:.1f}%" if normalize else f"{cm[i, j]}"
+                # Combine all info into one string: confusion value + attribute breakdown
+                annotations[i, j] = (
+                    f"{val_str}\n"
+                    f"{label_false}:{p_attr_false:.0f}% / {label_true}:{p_attr_true:.0f}%"
+                )
+
+    # Plot heatmap
+    plt.figure(figsize=(5.5, 4.5))
+    sns.heatmap(
+        cm_display,
+        annot=annotations,
+        fmt='',
+        cmap="Blues",
+        xticklabels=["Predicted ID", "Predicted OOD"],
+        yticklabels=["True ID", "True OOD"],
+        cbar=True
+    )
+    title = "Row normalized" if normalize else "Raw"
+    plt.title(f"{title} Confusion Matrix with Attribute Split")
+    plt.xlabel("Prediction")
+    plt.ylabel("Ground Truth")
+    plt.tight_layout()
+    plt.show()
 
 
 

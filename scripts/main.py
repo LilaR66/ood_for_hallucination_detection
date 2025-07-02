@@ -700,16 +700,16 @@ def retrieve_test_answers_embeddings_pipeline(
 SEED = 777 #44
 BATCH_SIZE = 16 #32
 MODEL_NAME = "meta-llama/Llama-2-7b-chat-hf"
-OUTPUT_DIR = "../results/raw/analyse_answers/"
-PLOT_DIR   = "../results/figures/analyse_answers/"
+OUTPUT_DIR = "../results/raw/big_dataset/"
+PLOT_DIR   = "../results/figures/big_dataset/"
 K_BEAMS = 1 #3
-ACTIVATION_SOURCE = "promptGeneration" # can be 'generation', 'prompt', 'promptGeneration'
+ACTIVATION_SOURCE = "prompt" # can be 'generation', 'prompt', 'promptGeneration'
 START_OFFSET = 0 #40
 END_OFFSET = 0   #-4
 
 
-LAYER_LIST = [-1 , 16]  # integer
-TOKENS_LIST = ["0" , "-1", "Avg", "Max",]  # string
+LAYER_LIST = [-1]      # [-1 , 16]  # integer
+TOKENS_LIST = ["Avg"] # ["0" , "-1", "Avg", "Max",]  # string
 
 # ====================================
 # Main function 
@@ -789,7 +789,7 @@ def main() -> None:
                 )
 
 
-            if True:
+            if False:
                 clear_cache()
                 retrieve_fit_answers_embeddings_pipeline(
                     model_name=MODEL_NAME,
@@ -809,7 +809,7 @@ def main() -> None:
                 )
 
             
-            if True:
+            if False:
                 clear_cache()
                 retrieve_test_answers_embeddings_pipeline(
                     model_name=MODEL_NAME,

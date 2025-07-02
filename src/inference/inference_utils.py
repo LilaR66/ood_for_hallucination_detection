@@ -880,6 +880,12 @@ def run_prompt_and_generation_activation_extraction(
         if len(activations)==0:
             raise RuntimeError("Hook failed to capture activations.")
         
+        # Retrieve text of generated answers
+        gen_answers = tokenizer.batch_decode(
+            outputs.sequences[:, prompt_len:], 
+            skip_special_tokens=True
+        ) # Shape: [batch_size,]
+        
         # Define prompt and generation hidden states 
         prompt_activations=activations[0]      # `[0]` to include only the prompt part 
         generation_activations=activations[1:] # `[1:]` to exclude the prompt part 
@@ -1078,6 +1084,7 @@ def run_prompt_and_generation_activation_extraction(
             "id": batch_dataset_ids,
             "original_indices": batch_dataset_original_idx,
             "activations": activations,
+            "gen_answers": gen_answers,
         }
 
         if save_to_pkl:

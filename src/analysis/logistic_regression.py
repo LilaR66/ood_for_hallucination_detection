@@ -2,14 +2,14 @@ import torch
 import numpy as np
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
-
+from typing import Tuple
 
 def train_logistic_regression_on_embeddings(
     id_test_embeddings: torch.Tensor,
     od_test_embeddings: torch.Tensor,
     random_state: int = 42,
     test_size: float = 0.2,
-):
+) -> Tuple[LogisticRegression, np.ndarray, np.ndarray, np.ndarray]:
     """
     Train and evaluate a logistic regression classifier to distinguish 
     in-distribution (ID) from out-of-distribution (OOD) embeddings.
@@ -29,10 +29,12 @@ def train_logistic_regression_on_embeddings(
     -------
     clf : sklearn.linear_model.LogisticRegression
         The trained logistic regression classifier.
-    y_true : np.ndarray
+    y_test : np.ndarray
         Ground-truth labels for the test split (0 = ID, 1 = OOD).
     y_pred : np.ndarray
         Predicted labels for the test split (0 = predicted ID, 1 = predicted OOD).
+    idx_test : np.ndarray
+        Indexes of samples used for testing
     """
 
     # 1. Concatenate embeddings and create labels
@@ -43,8 +45,9 @@ def train_logistic_regression_on_embeddings(
     ])
 
     # 2. Stratified train/test split to preserve class proportions
-    X_train, X_true, y_train, y_true = train_test_split(
-        X, y, test_size=test_size, random_state=random_state, stratify=y
+    indices = np.arange(len(X))
+    X_train, X_test, y_train, y_test, idx_train, idx_test = train_test_split(
+        X, y, indices, test_size=test_size, random_state=random_state, stratify=y
     )
 
     # 3. Train logistic regression
@@ -52,6 +55,6 @@ def train_logistic_regression_on_embeddings(
     clf.fit(X_train, y_train)
 
     # 4. Predict and evaluate on test set
-    y_pred = clf.predict(X_true)
+    y_pred = clf.predict(X_test)
 
-    return clf, y_true, y_pred
+    return clf, y_test, y_pred, idx_test
