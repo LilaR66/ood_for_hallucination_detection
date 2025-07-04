@@ -30,7 +30,7 @@ from tqdm import tqdm
 from typing import Dict, List, Any, Callable, Tuple
 import time
 
-from src.evaluation.similarity_metrics import rouge_l_simScore, sentence_bert_simScore
+from src.answer_similarity.similarity_metrics import rouge_l_simScore, sentence_bert_simScore
 from src.data_reader.pickle_io import append_to_pickle
 
 # Specific to Llama tokenizer: 

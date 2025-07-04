@@ -46,8 +46,9 @@ Main Features
 import torch
 import torch.nn.functional as F
 import numpy as np
-from typing import Literal
-from src.analysis.analysis_utils import compute_kmeans_centroids, compute_kmedoids_centers
+from typing import Literal, Tuple
+from src.ood_methods.ood_utils import compute_kmeans_centroids, compute_kmedoids_centers
+from src.analysis.evaluation import compute_metrics
 
 
 def compute_cosine_similarity(
@@ -55,16 +56,23 @@ def compute_cosine_similarity(
     id_test_embeddings: torch.Tensor,
     od_test_embeddings: torch.Tensor,
     seed: int = 44,
-    center_type: Literal["mean", "kmeans", "kmedoids"] = "mean",
+    center_type: Literal["mean","all", "kmeans", "kmedoids", ] = "mean",
     k: int = 5,
-) -> dict:
+) -> Tuple[np.ndarray, np.ndarray]:
     """
     Performs OOD detection by computing cosine similarity between test embeddings
     and representative ID centers (mean, k-means centroids, or medoids).
 
+    The cosine similarity score represents the angular closeness between a sample and 
+    the center of the ID training distribution. Higher scores indicate stronger similarity 
+    (likely ID), while lower scores suggest dissimilarity and potential OOD status.
+    Therefore, to be consistent with the rest of the code, we return the opposite of the 
+    cosine distance such that higher scores indicate a OOD sample.  
+
     Why use different centers?
     ---------------------------
     => "mean": uses the average of all ID embeddings as a single representative center.
+    => "all": uses all ID embeddings to
     => "kmeans": applies K-Means clustering on ID embeddings and uses the centroids of the k clusters 
         as representative centers.
     => "kmedoids": Uses K-Medoids clustering, which selects k real embeddings (medoids)
@@ -90,12 +98,12 @@ def compute_cosine_similarity(
 
     Returns
     -------
-    dict
-        Dictionary with cosine similarity scores:
-        {
-            'cossim_scores_id': cosine similarity of ID test embeddings to closest center(s),  # Shape: [n_id_test_samples]
-            'cossim_scores_ood': cosine similarity of OOD test embeddings to closest center(s) # Shape: [n_ood_test_samples]
-        }
+    cossim_scores_id : np.ndarray
+        (Oposite of) cosine similarity of ID test embeddings to closest center(s).
+        Shape: [n_id_test_samples]
+    cossim_scores_ood : np.ndarray
+        (Oposite of) cosine similarity of OOD test embeddings to closest center(s).
+        Shape: [n_ood_test_samples]
 
     Notes
     -----
@@ -117,6 +125,9 @@ def compute_cosine_similarity(
         centers = compute_kmeans_centroids(id_fit_embeddings, k=k, normalize=True, seed=seed)  # Shape: [k, hidden_size]
     elif center_type == 'kmedoids':
         centers = compute_kmedoids_centers(id_fit_embeddings, k=k, normalize=True, seed=seed)  # Shape: [k, hidden_size]
+    elif center_type == 'all':
+        # Keep all normalized embeddings as centers
+        centers = F.normalize(id_fit_embeddings, p=2, dim=1)  
     else:
         raise ValueError(f"Unknown center_type: {center_type}")
 
@@ -136,10 +147,10 @@ def compute_cosine_similarity(
     # We take the maximum cosine similarity because we want to know if a test point 
     # is highly similar to any  center of the ID: If the point is highly similar to 
     # at least one center (high maximum similarity), it can be considered ID.
-    max_sim_id = np.max(sim_id, axis=1)
+    max_sim_id = np.max(sim_id, axis=1)    
     max_sim_ood = np.max(sim_ood, axis=1)
 
-    return {
-        'cossim_scores_id': max_sim_id,  # Shape: [n_id_test_samples]
-        'cossim_scores_ood': max_sim_ood # Shape: [n_ood_test_samples]
-    }
+    cossim_scores_id = max_sim_id    # Shape: [n_id_test_samples]
+    cossim_scores_ood = max_sim_ood  # Shape: [n_ood_test_samples]
+
+    return - cossim_scores_id, - cossim_scores_ood

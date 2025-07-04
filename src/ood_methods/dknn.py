@@ -35,10 +35,14 @@ semantic similarity. High DKNN scores suggest out-of-distribution behavior.
 
 import torch
 import numpy as np
+from typing import Tuple
+from src.ood_methods.ood_utils import l2_normalize
+from src.analysis.evaluation import compute_metrics
 # if you have cuda version 12:
 # uv pip install faiss-gpu-cu12
 import faiss 
-from src.analysis.analysis_utils import l2_normalize
+
+
 
 
 def fit_to_dataset(fit_embeddings: torch.tensor) -> faiss.Index:
@@ -121,3 +125,55 @@ def score_tensor(
     # Concatenate results from all batches
     return np.concatenate(all_scores)
 
+    
+
+def compute_dknn_scores(
+    id_fit_embeddings: torch.Tensor,
+    id_test_embeddings: torch.Tensor, 
+    od_test_embeddings: torch.Tensor,
+    k: int = 5,
+    batch_size: int = 1000
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Compute DKNN (Deep k-Nearest Neighbors) scores for OOD detection.
+
+    This function:
+    - Fits a FAISS index on in-distribution embeddings
+    - Computes DKNN scores (distance to k-th nearest neighbor) for both ID and OOD test samples
+
+    The DKNN score represents the distance to the k-th nearest neighbor in the 
+    ID training set. Higher scores indicate samples that are far from the ID 
+    distribution (likely OOD), while lower scores indicate samples close to 
+    the ID distribution.
+
+    Parameters
+    ----------
+    id_fit_embeddings : torch.Tensor
+        In-distribution training embeddings used to fit the DKNN index.
+        Shape: [n_fit_samples, embedding_dim]
+    id_test_embeddings : torch.Tensor
+        In-distribution test embeddings.
+        Shape: [n_id_test_samples, embedding_dim]
+    od_test_embeddings : torch.Tensor
+        Out-of-distribution test embeddings.
+        Shape: [n_ood_test_samples, embedding_dim]
+    k : int, optional (default=5)
+        Number of nearest neighbors used for scoring.
+    batch_size : int, optional (default=1000)
+        Batch size for scoring to manage memory.
+
+    Returns
+    -------
+    dknn_scores_id : np.ndarray
+        DKNN scores for ID test samples.
+        Shape: [n_id_test_samples]
+    dknn_scores_ood : np.ndarray
+        DKNN scores for OOD test samples.
+        Shape: [n_ood_test_samples]
+    """
+    index = fit_to_dataset(id_fit_embeddings)
+
+    dknn_scores_id = score_tensor(index, id_test_embeddings, nearest=k, batch_size=batch_size)
+    dknn_scores_ood = score_tensor(index, od_test_embeddings, nearest=k, batch_size=batch_size)
+
+    return dknn_scores_id, dknn_scores_ood

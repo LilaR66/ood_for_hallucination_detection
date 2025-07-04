@@ -42,9 +42,9 @@ Main Features
 """
 import torch
 import numpy as np
-from typing import Literal
-from src.analysis.analysis_utils import compute_kmeans_centroids, compute_kmedoids_centers
-
+from typing import Literal, Tuple
+from src.ood_methods.ood_utils import compute_kmeans_centroids, compute_kmedoids_centers
+from src.analysis.evaluation import compute_metrics
 
 def compute_mahalanobis_distance(
     id_fit_embeddings: torch.Tensor,
@@ -54,11 +54,16 @@ def compute_mahalanobis_distance(
     center_type: Literal["mean", "kmeans", "kmedoids"] = "mean",
     k: int = 5,
     reg_eps: float = 1e-6
-) -> dict:
+) -> Tuple[np.ndarray, np.ndarray]:
     """
     Performs OOD detection by computing Mahalanobis distance between test embeddings
     and representative ID centers (mean, k-means centroids, or medoids).
 
+    The Mahalanobis distance measures how far a sample lies from the ID training distribution
+    while accounting for its covariance structure. Higher scores suggest the sample is far 
+    from the ID manifold (likely OOD), while lower scores indicate it lies closer to the 
+    expected distribution.
+    
     Why use different centers?
     ---------------------------
     => "mean": uses the average of all ID embeddings as a single representative center.
@@ -87,11 +92,12 @@ def compute_mahalanobis_distance(
 
     Returns
     -------
-    dict
-        {
-            'maha_scores_id': Mahalanobis distance of ID test embeddings to closest center(s),  # Shape: [n_id_test_samples]
-            'maha_scores_ood': Mahalanobis distance of OOD test embeddings to closest center(s), # Shape: [n_ood_test_samples]
-        }
+    maha_scores_id : np.ndarray
+        Mahalanobis distance of ID test embeddings to closest center(s).
+        Shape: [n_id_test_samples]
+     maha_scores_ood : np.ndarray
+        Mahalanobis distance of OOD test embeddings to closest center(s).
+        Shape: [n_ood_test_samples]
     """
     # Convert to numpy
     id_fit_np = id_fit_embeddings.detach().cpu().numpy().astype(np.float32)
@@ -138,7 +144,9 @@ def compute_mahalanobis_distance(
     min_maha_id = np.min(maha_id, axis=1)
     min_maha_ood = np.min(maha_ood, axis=1)
 
-    return {
-        'maha_scores_id':  min_maha_id,  # Shape: [n_id_test_samples]
-        'maha_scores_ood': min_maha_ood  # Shape: [n_ood_test_samples]
-    }
+    maha_scores_id =  min_maha_id  # Shape: [n_id_test_samples]
+    maha_scores_ood = min_maha_ood # Shape: [n_ood_test_samples]
+
+    return maha_scores_id, maha_scores_ood 
+
+

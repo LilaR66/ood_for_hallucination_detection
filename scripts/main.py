@@ -221,7 +221,7 @@ def run_filter_generated_answers_by_similarity_pipeline(
         tokenizer=tokenizer,
         dataset=id_fit_dataset,
         batch_size=batch_size,
-        idx_start_sample= 0,
+        idx_start_sample=0,
         max_samples=len(id_fit_dataset),
         output_path=output_path,
         build_prompt_fn=build_prompt_fn
@@ -314,7 +314,7 @@ def retrieve_fit_inputs_embeddings_pipeline(
 
     # Retrieve ID embeddings and save results
     # -----------------------------------
-    print("\nStart retrieving ID embeddings from inputs...")
+    print("\nStart retrieving ID fit embeddings from inputs...")
     t0 = time.time()
     run_prompt_activation_extraction(
         model=model,
@@ -533,7 +533,7 @@ def retrieve_fit_answers_embeddings_pipeline(
 
     # Retrieve ID embeddings and save results
     # -----------------------------------
-    print("\nStart retrieving ID embeddings from generated answers...")
+    print(f"\nStart retrieving ID fit embeddings from {activation_source}...")
     t0 = time.time()
     run_prompt_and_generation_activation_extraction(
         model=model,
@@ -636,7 +636,7 @@ def retrieve_test_answers_embeddings_pipeline(
     # Retrieve test embeddings and save results 
     # -----------------------------------
     # Extract OOD test embeddings
-    print("\nStart retrieving test impossible embeddings from answers...")
+    print(f"\nStart retrieving test impossible embeddings from {activation_source}...")
     t2 = time.time()
     run_prompt_and_generation_activation_extraction(
         model=model,
@@ -661,7 +661,7 @@ def retrieve_test_answers_embeddings_pipeline(
     print_time_elapsed(t2, t3, label="Impossible test embeddings: ")
 
     # Extract ID test embeddings
-    print("\nStart retrieving test possible embeddings from answers...")
+    print(f"\nStart retrieving test possible embeddings from {activation_source}...")
     t4 = time.time()
     run_prompt_and_generation_activation_extraction(
         model=model,
@@ -703,13 +703,13 @@ MODEL_NAME = "meta-llama/Llama-2-7b-chat-hf"
 OUTPUT_DIR = "../results/raw/big_dataset/"
 PLOT_DIR   = "../results/figures/big_dataset/"
 K_BEAMS = 1 #3
-ACTIVATION_SOURCE = "prompt" # can be 'generation', 'prompt', 'promptGeneration'
+ACTIVATION_SOURCE = "generation" # can be 'generation', 'prompt', 'promptGeneration'
 START_OFFSET = 0 #40
 END_OFFSET = 0   #-4
 
 
 LAYER_LIST = [-1]      # [-1 , 16]  # integer
-TOKENS_LIST = ["Avg"] # ["0" , "-1", "Avg", "Max",]  # string
+TOKENS_LIST = ["0"] # ["0" , "-1", "Avg", "Max",]  # string
 
 # ====================================
 # Main function 
@@ -724,10 +724,10 @@ def main() -> None:
         run_filter_generated_answers_by_similarity_pipeline(
             model_name=MODEL_NAME,
             seed=SEED,
-            output_path=OUTPUT_DIR + f"id_fit_results_answers",
-            save_dataset_path="../data/datasets/id_fit_correct_dataset.pkl",
+            output_path=OUTPUT_DIR + f"id_fit_results_answers_BIG",
+            save_dataset_path="../data/datasets/id_fit_correct_dataset_BIG.pkl",
             shuffle=True,
-            select_slice=(0,10_000),
+            select_slice=None, #(0, 10_000) 
             batch_size=BATCH_SIZE,
             build_prompt_fn=build_prompt
         )
@@ -789,15 +789,15 @@ def main() -> None:
                 )
 
 
-            if False:
+            if True:
                 clear_cache()
                 retrieve_fit_answers_embeddings_pipeline(
                     model_name=MODEL_NAME,
                     seed=SEED,
                     output_path=f"{OUTPUT_DIR}id_fit_results{OUTPUT_GEN_TITLE}",
-                    custom_dataset_path="../data/datasets/id_fit_correct_dataset.pkl",
+                    custom_dataset_path="../data/datasets/id_fit_correct_dataset_BIG.pkl",
                     shuffle=True,
-                    select_slice=(0,10_000),
+                    select_slice=None, #(0,10_000),
                     batch_size=BATCH_SIZE,
                     build_prompt_fn=build_prompt,
                     layer_idx=LAYER,
@@ -809,7 +809,7 @@ def main() -> None:
                 )
 
             
-            if False:
+            if True:
                 clear_cache()
                 retrieve_test_answers_embeddings_pipeline(
                     model_name=MODEL_NAME,
@@ -817,7 +817,7 @@ def main() -> None:
                     id_output_path=f"{OUTPUT_DIR}id_test_results{OUTPUT_GEN_TITLE}",
                     od_output_path=f"{OUTPUT_DIR}od_test_results{OUTPUT_GEN_TITLE}",
                     shuffle=True,
-                    select_slice=(0,1000),
+                    select_slice=(0,8760), #(0,1000),
                     batch_size=BATCH_SIZE,
                     build_prompt_fn=build_prompt,
                     layer_idx=LAYER,

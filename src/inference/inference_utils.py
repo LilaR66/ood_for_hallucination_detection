@@ -28,7 +28,7 @@ from tqdm import tqdm
 from typing import Dict, List, Any, Callable, Tuple, Union, Literal
 import time
 
-from src.evaluation.similarity_metrics import rouge_l_simScore, sentence_bert_simScore
+from src.answer_similarity.similarity_metrics import rouge_l_simScore, sentence_bert_simScore
 from src.data_reader.pickle_io import save_batch_pickle
 from src.inference.activation_utils import compute_offset_attention_mask
 
