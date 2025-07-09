@@ -12,6 +12,9 @@ strategies for selecting representative centers.
 ************************************************************
 A high Cosine similarity score => ID data (aligned with ID center)
 A low Cosine similarity score  => OOD data (different direction)
+
+Therefore, to be consistent with the rest of the code, we return the opposite of the 
+cosine distance such that higher scores indicate a OOD sample. 
 ************************************************************
 
 Cosine Similarity
@@ -46,18 +49,18 @@ Main Features
 import torch
 import torch.nn.functional as F
 import numpy as np
-from typing import Literal, Tuple
+from typing import Literal, Tuple, Optional
 from src.ood_methods.ood_utils import compute_kmeans_centroids, compute_kmedoids_centers
-from src.analysis.evaluation import compute_metrics
-
+from tqdm import tqdm
 
 def compute_cosine_similarity(
     id_fit_embeddings: torch.Tensor,
     id_test_embeddings: torch.Tensor,
     od_test_embeddings: torch.Tensor,
     seed: int = 44,
-    center_type: Literal["mean","all", "kmeans", "kmedoids", ] = "mean",
+    center_type: Literal["mean", "all", "kmeans", "kmedoids"] = "mean",
     k: int = 5,
+    batch_size: Optional[int] = None,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
     Performs OOD detection by computing cosine similarity between test embeddings
@@ -72,7 +75,7 @@ def compute_cosine_similarity(
     Why use different centers?
     ---------------------------
     => "mean": uses the average of all ID embeddings as a single representative center.
-    => "all": uses all ID embeddings to
+    => "all": uses all ID embeddings as the ID reprensentation
     => "kmeans": applies K-Means clustering on ID embeddings and uses the centroids of the k clusters 
         as representative centers.
     => "kmedoids": Uses K-Medoids clustering, which selects k real embeddings (medoids)
@@ -95,6 +98,8 @@ def compute_cosine_similarity(
         - 'kmedoids': uses sklearn_extra KMedoids (real embeddings as centers)
     k : int
         Number of clusters or medoids to use (if method is "kmeans" or "kmedoids").
+    batch_size : int
+        If center_type='all' and batch_size is not None, process samples per batch. 
 
     Returns
     -------
@@ -111,6 +116,7 @@ def compute_cosine_similarity(
     from the ID training set. A high similarity suggests the input is in-distribution, 
     while a low similarity may indicate OOD behavior.
     """
+    device = id_fit_embeddings.device
 
     # Normalize test embeddings (L2 norm along last dim)
     id_test_norm = F.normalize(id_test_embeddings, p=2, dim=1)
@@ -131,26 +137,35 @@ def compute_cosine_similarity(
     else:
         raise ValueError(f"Unknown center_type: {center_type}")
 
-    # Convert test embeddings to numpy for dot product
-    id_test_np = id_test_norm.cpu().numpy()   # Shape: [n_id_test_samples, hidden_size]
-    od_test_np = od_test_norm.cpu().numpy()   # Shape: [n_ood_test_samples, hidden_size]
+    # Convert centers to torch tensor
+    if isinstance(centers, np.ndarray):
+            centers = torch.from_numpy(centers).to(device).float()
 
-    # Convert centers to numpy if needed
-    if isinstance(centers, torch.Tensor):
-        centers = centers.cpu().numpy()
+    def batch_max_sim(test_embeddings, centers, batch_size):
+        n = test_embeddings.shape[0]
+        max_sims = []
+        for i in tqdm(range(0, n, batch_size)):
+            sim = test_embeddings[i:i+batch_size] @ centers.T
+            max_sim = torch.max(sim, dim=1).values
+            max_sims.append(max_sim)
+        return torch.cat(max_sims, dim=0)
 
-    # Cosine similarity = dot product (since all are L2-normalized)
-    sim_id = id_test_np @ centers.T    # Shape: [n_id_test_samples, k]
-    sim_ood = od_test_np @ centers.T   # Shape: [n_ood_test_samples, k]
+    if batch_size is not None and center_type == "all":
+        # Batch computation to avoid OOM
+        max_sim_id = batch_max_sim(id_test_norm, centers, batch_size)
+        max_sim_ood = batch_max_sim(od_test_norm, centers, batch_size)
+    else:
+        # Cosine similarity = dot product (since all are L2-normalized)
+        sim_id = id_test_norm @ centers.T   # Shape: [n_id_test_samples, k]
+        sim_ood = od_test_norm @ centers.T  # Shape: [n_ood_test_samples, k]
+        # Keep max similarity across centers for each test sample
+        # We take the maximum cosine similarity because we want to know if a test point 
+        # is highly similar to any center of the ID: If the point is highly similar to 
+        # at least one center (high maximum similarity), it can be considered ID.
+        max_sim_id = torch.max(sim_id, dim=1).values
+        max_sim_ood = torch.max(sim_ood, dim=1).values
 
-    # Keep max similarity across centers for each test sample
-    # We take the maximum cosine similarity because we want to know if a test point 
-    # is highly similar to any  center of the ID: If the point is highly similar to 
-    # at least one center (high maximum similarity), it can be considered ID.
-    max_sim_id = np.max(sim_id, axis=1)    
-    max_sim_ood = np.max(sim_ood, axis=1)
-
-    cossim_scores_id = max_sim_id    # Shape: [n_id_test_samples]
-    cossim_scores_ood = max_sim_ood  # Shape: [n_ood_test_samples]
+    cossim_scores_id = max_sim_id.cpu().numpy()    # Shape: [n_id_test_samples]
+    cossim_scores_ood = max_sim_ood.cpu().numpy()  # Shape: [n_ood_test_samples]
 
     return - cossim_scores_id, - cossim_scores_ood
