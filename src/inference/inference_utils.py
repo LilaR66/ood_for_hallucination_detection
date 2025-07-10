@@ -1079,12 +1079,18 @@ def run_prompt_and_generation_activation_extraction(
 
         batch_dataset_ids = [s['id'] for s in batch]
         batch_dataset_original_idx = [s['original_index'] for s in batch]
+        batch_context = [s['context'] for s in batch]
+        batch_question = [s['question'] for s in batch]
+        batch_gt_answers = [s['answers'] for s in batch]
         
         batch_results = {
             "id": batch_dataset_ids,
             "original_indices": batch_dataset_original_idx,
             "activations": activations,
             "gen_answers": gen_answers,
+            "gt_answers": batch_gt_answers,
+            "context": batch_context,
+            "question": batch_question
         }
 
         if save_to_pkl:
