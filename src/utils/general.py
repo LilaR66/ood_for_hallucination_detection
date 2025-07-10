@@ -3,6 +3,7 @@
 import torch
 import numpy as np
 import random
+import os 
 
 def print_time_elapsed(start, end, label=""):
     elapsed = end - start
@@ -13,11 +14,17 @@ def print_time_elapsed(start, end, label=""):
 def seed_all(seed: int = 44) -> None:
     random.seed(seed)                          # Python random
     np.random.seed(seed)                       # NumPy
+    os.environ["PYTHONHASHSEED"] = str(seed)   # Hashed objects (e.g. dictionaries)
     torch.manual_seed(seed)                    # PyTorch CPU
     torch.cuda.manual_seed(seed)               # PyTorch GPU
     torch.cuda.manual_seed_all(seed)           # If multiple GPUs
-    from transformers import set_seed
-    set_seed(seed) # Deterministic HuggingFace .generate() calls
+    torch.backends.cudnn.deterministic = True  # /.\ Can slow inference
+    torch.backends.cudnn.benchmark = False     # /.\ Can slow inference
+    try:
+        from transformers import set_seed
+        set_seed(seed) # Deterministic HuggingFace .generate() calls
+    except ImportError:
+        pass
 
 
 def filter_entries(data: dict, column: str, value=1) -> dict:
