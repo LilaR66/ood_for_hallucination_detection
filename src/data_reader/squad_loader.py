@@ -208,6 +208,18 @@ class SquadDataset:
         self.dataset = self.dataset.filter(lambda x: len(x["answers"]["text"]) == 0)
         return self
 
+    def filter_possible(self):
+        """
+        Filter the dataset to keep only questions with at least one answer
+        (i.e., non-empty 'answers["text"]').
+
+        Returns
+        -------
+        SquadDataset
+        """
+        self.dataset = self.dataset.filter(lambda x: len(x["answers"]["text"]) > 0)
+        return self
+
     def keep_first_answer_possible(self):
         """
         Keep only the first available answer for each question with answers.
@@ -292,6 +304,7 @@ class SquadDataset:
 
 
 # Dataset loading wrappers using SquadDataset
+'''
 def load_id_fit_dataset():
     """
     Load the training split of SQuAD v1.1 and return it wrapped in SquadDataset.
@@ -339,4 +352,59 @@ def load_od_test_dataset():
         .add_original_index()\
         .add_impossible_flag(1)\
         .keep_first_answer_impossible()
+'''
 
+
+def load_id_fit_dataset():
+    """
+    Load the training split of SQuAD v2.0, keep only answerable questions,
+    and return the result wrapped in a SquadDataset.
+    Adds index and formats answers for consistency.
+
+    Returns
+    -------
+    SquadDataset
+    """
+    ds = load_dataset("squad_v2")['train']
+    return SquadDataset(ds)\
+        .filter_possible()\
+        .add_original_index()\
+        .keep_first_answer_possible()\
+        .add_impossible_flag(0)
+
+
+def load_id_test_dataset():
+    """
+    Load the validation split of SQuAD v2.0, keep only answerable questions,
+    and return the result wrapped in a SquadDataset.
+    Useful for evaluating model accuracy on in-distribution examples.
+
+    Returns
+    -------
+    SquadDataset
+    """
+    ds = load_dataset("squad_v2")['validation']
+    return SquadDataset(ds)\
+        .filter_possible()\
+        .add_original_index()\
+        .keep_first_answer_possible()\
+        .add_impossible_flag(0)
+
+
+def load_od_test_dataset():
+    """
+    Load the validation split of SQuAD v2.0, keep only unanswerable questions,
+    and return the result wrapped in a SquadDataset.
+    Sets the "is_impossible" flag to 1.
+    Useful for evaluating model accuracy on out-of-distribution examples.
+
+    Returns
+    -------
+    SquadDataset
+    """
+    ds = load_dataset("squad_v2")['validation']
+    return SquadDataset(ds)\
+        .filter_impossible()\
+        .add_original_index()\
+        .add_impossible_flag(1)\
+        .keep_first_answer_impossible()
