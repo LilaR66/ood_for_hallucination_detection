@@ -31,7 +31,7 @@ def register_forward_activation_hook(
     model: PreTrainedModel,
     captured_hidden: dict,
     layer_idx: int = -1
-) -> RemovableHandle:
+) -> Tuple[RemovableHandle, dict]:
     """
     Attaches a forward hook to a specific transformer layer to capture hidden states 
     during a single forward pass (more memory-efficient than using output_hidden_states=True).
@@ -72,9 +72,9 @@ def register_forward_activation_hook(
         
         # output is a tuple (hidden_states,) → keep [0]
         if layer_idx == -1:
-            captured_hidden["activations"] = model.model.norm(output[0])  # post RMSNorm!
+            captured_hidden["activations"] = model.model.norm(output[0].detach())  # post RMSNorm!
         else:
-            captured_hidden["activations"] = output[0]
+            captured_hidden["activations"] = output[0].detach()
 
     # Register hook on the transformer block
     # When Pytorch pass through this layer during a forward pass, it also execute hook_fn.
@@ -88,7 +88,7 @@ def register_generation_activation_hook(
     model: PreTrainedModel,
     captured_hidden_list: List[torch.Tensor],
     layer_idx: int = -1
-) -> RemovableHandle:
+) -> Tuple[RemovableHandle, dict]:
     """
     Attaches a forward hook to a specific transformer layer to capture hidden states
     during autoregressive text generation i.e., at each decoding step.
@@ -131,10 +131,10 @@ def register_generation_activation_hook(
         # output is a tuple (hidden_states,) → keep [0]
         if layer_idx == -1:
             # Capture the final normalized output 
-            captured_hidden_list.append(model.model.norm(output[0]).detach().cpu())  # post RMSNorm!
+            captured_hidden_list.append(model.model.norm(output[0]).detach())  # post RMSNorm!
         else:
             # Capture raw hidden states before layer normalization
-            captured_hidden_list.append(output[0].detach().cpu()) 
+            captured_hidden_list.append(output[0].detach()) 
     
     # Register hook on the transformer block
     # When Pytorch pass through this layer during forward pass, it also execute hook_fn.
