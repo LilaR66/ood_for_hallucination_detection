@@ -96,7 +96,8 @@ def save_batch_pickle(batch_data: dict, output_dir: str, batch_idx: int):
         pickle.dump(batch_data, f)
 
 
-
+# old version: flat dictionaries 
+'''
 def load_and_merge_pickles(directory: str) -> Dict[str, List[Any]]:
     """
     Load and merge all batch pickle files from a directory into a single results dictionary.
@@ -124,6 +125,60 @@ def load_and_merge_pickles(directory: str) -> Dict[str, List[Any]]:
             else:
                 for k in batch:
                     merged[k].extend(batch[k])
+    return merged
+'''
+
+
+
+# new version: nested dictionaries 
+def load_and_merge_pickles(directory: str) -> Dict[str, Any]:
+    """
+    Load and recursively merge all batch pickle files from a directory into a single results dictionary.
+
+    Each pickle file must contain a dictionary with the same structure across batches.
+
+    The function merges nested dictionaries, concatenating values along the batch axis.
+    Supported merge strategies:
+        - Lists are extended (concatenated).
+        - NumPy arrays are concatenated along the first dimension (axis=0).
+        - Nested dictionaries are merged recursively.
+
+    Parameters
+    ----------
+    directory : str
+        Path to the directory containing batch pickle files. Files must match the pattern '*.pkl'.
+
+    Returns
+    -------
+    Dict[str, Any]
+        A recursively merged dictionary where:
+            - Leaf values are lists or arrays aggregated from all batches.
+            - Nested dictionaries (e.g., "scores" -> "layer_0" -> "hidden") are merged in depth.
+    """
+    def recursive_merge(dest: dict, src: dict):
+        for key, value in src.items():
+            if key not in dest:
+                dest[key] = value if not isinstance(value, dict) else recursive_merge({}, value)
+            else:
+                if isinstance(value, dict) and isinstance(dest[key], dict):
+                    recursive_merge(dest[key], value)
+                elif isinstance(value, list):
+                    dest[key].extend(value)
+                elif hasattr(value, 'shape'):  # numpy array
+                    import numpy as np
+                    dest[key] = np.concatenate([dest[key], value], axis=0)
+                else:
+                    raise ValueError(f"Cannot merge key '{key}' with type {type(value)}")
+
+        return dest
+
+    merged = {}
+    files = sorted(glob.glob(os.path.join(directory, "*.pkl")))
+    for file in files:
+        with open(file, "rb") as f:
+            batch = pickle.load(f)
+            recursive_merge(merged, batch)
+
     return merged
 
 

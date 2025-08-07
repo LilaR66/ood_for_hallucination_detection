@@ -1,239 +1,150 @@
 #!/usr/bin/env python3
 """
-============================================================
-Utilities for Prompt Construction, Batched Inference, and Answer Evaluation with LLMs
-============================================================
-
-This module provides high-level utilities for running batched inference
-using decoder-only language models (e.g., LLaMA). It includes structured prompt
-construction, answer generation, evaluation against ground-truth answers, and
-optional extraction of token-level activations.
-
-
-Main Features
--------------
-- Constructs LLaMA-compatible prompts for question answering
-- Performs batched tokenization and generation
-- Computes semantic similarity using ROUGE and Sentence-BERT
-- Supports per-sample or batched evaluation and analysis
-- Extracts token-level activations from generated or prompted sequences
-- Saves generation results (answers, scores, metadata) incrementally to disk
+Old version of inference_utils with functions supporting only the extraction of a 
+single hidden activation score per run. Unlike the current version, which allows 
+retrieving multiple types of scores simultaneously (e.g., minimum, maximum, last, 
+or first generated), this version returns only one score at a time. It also includes
+beam search for generation, a feature no longer used in the new inference_utils. 
+Furthermore, the associated hook can capture activations from only one layer at a time,
+not multiple layers simultaneously.
 """
-
-
-from transformers import PreTrainedTokenizer, PreTrainedModel, BatchEncoding
+from transformers import PreTrainedTokenizer, PreTrainedModel
 import torch
 from datasets import  Dataset
 from tqdm import tqdm
-from typing import Dict, List, Any, Callable, Tuple, Union, Literal
-import time
+from typing import List, Callable, Union, Literal, Tuple
+from torch.utils.hooks import RemovableHandle
 
-from src.answer_similarity.similarity_metrics import rouge_l_simScore, sentence_bert_simScore
 from src.data_reader.pickle_io import save_batch_pickle
-from src.inference.activation_utils import compute_offset_attention_mask
+from src.inference.offset_utils import compute_offset_attention_mask
 
-# Specific to Llama tokenizer: 
-'''
-def build_prompt(context:str, question:str) -> str:
-    """
-    Construct a structured prompt for question answering with an LLM.
-
-    The prompt includes the special formatting: `[INST]`, [/INST]`, `<<SYS>>`
-    as recommended here: https://huggingface.co/meta-llama/Llama-2-7b-chat-hf
-
-    **Note:** the llama tokenizer adds a special `<s> ` before `[INST]`. 
-    **Note:** we also experimented with giving 2-3 few shot prompts. 
-    However, just appending the sentence "Just give the answer, without a complete sentence." 
-    at the begining of the prompt seemed to work best. 
-
-    Parameters
-    ----------
-    context : str
-        The input passage or context from which the answer should be extracted.
-    question : str
-        The question to be answered based on the provided context.
-
-    Returns
-    -------
-    str
-        A formatted prompt string ready to be fed to a language model.
-    
-    """
-    prompt = f"[INST] <<SYS>>\nJust give the answer, without a complete sentence. Reply with 'Impossible to answer' if answer not in context.\n<</SYS>>\n\nContext:\n" + context + "\n\nQuestion:\n" + question  + "\n\nAnswer:\n[/INST]" 
-    return prompt
-'''
-
-# Specific to Llama tokenizer:
-def build_prompt(context:str, question:str) -> str:
-    """
-    Construct a structured prompt for question answering with an LLM.
-
-    The prompt includes the special formatting: `[INST]`, [/INST]`, `<<SYS>>`
-    as recommended here: https://huggingface.co/meta-llama/Llama-2-7b-chat-hf
-
-    The prompt is formatted according to this paper:
-    "The Curious Case of Hallucinatory (Un)answerability: Finding Truths in
-    the Hidden States of Over-Confident Large Language Models (2023)" 
-
-    **Note:** the llama tokenizer adds a special `<s> ` before `[INST]`. 
-    **Note:** we also experimented with giving 2-3 few shot prompts. 
-    However, just appending the sentence "Just give the answer, without a complete sentence." 
-    at the begining of the prompt seemed to work best. 
-
-    Parameters
-    ----------
-    context : str
-        The input passage or context from which the answer should be extracted.
-    question : str
-        The question to be answered based on the provided context.
-
-    Returns
-    -------
-    str
-        A formatted prompt string ready to be fed to a language model.
-    
-    """
-    B_INST = "[INST]"
-    E_INST = "[/INST]"
-    B_SYS = "<<SYS>>\n"
-    E_SYS = "\n<</SYS>>\n\n"
-    HINT = "Given the following passage and question, answer the question by only giving the answer without a complete sentence.\nIf it cannot be answered based on the passage, reply 'unanswerable':"
-    prompt = f"{B_INST} {B_SYS}{HINT}{E_SYS}Passage: {context}\nQuestion: {question} {E_INST}"
-    return prompt
+from src.inference.generation_utils import (
+    extract_batch, 
+    generate, 
+    build_generation_attention_mask
+    )
 
 
-def extract_batch(
-    dataset: Dataset,
-    idx_start: int, 
-    batch_size: int
-) -> List[Dict[str, Any]]:
-    """
-    Extract a slice from a HuggingFace Dataset and convert it to a list of dictionaries.
-
-    Parameters
-    ----------
-    dataset : Dataset
-        The HuggingFace Dataset to slice.
-    idx_start : int
-        Start index (inclusive) of the batch.
-    batch_size : int
-        Number of examples to include in the batch.
-
-    Returns
-    -------
-    List[Dict[str, Any]]
-        List of examples as dictionaries (one per example).
-    """
-    end_idx = min(idx_start + batch_size, len(dataset))
-    batch = dataset.select(range(idx_start, end_idx))
-    batch_dicts = batch.to_dict()
-    return [dict(zip(batch_dicts.keys(), vals)) for vals in zip(*batch_dicts.values())]
-
-
-
-def generate(
+# OLD VERSION: HOOKS ONLY 1 LAYER
+def register_forward_activation_hook(
     model: PreTrainedModel,
-    inputs: BatchEncoding,
-    tokenizer: PreTrainedTokenizer,
-    max_new_tokens: int = 50,
-    k_beams: int = 1,
-    **generate_kwargs
-) -> Union[torch.Tensor, Dict[str, torch.Tensor]]:
+    captured_hidden: dict,
+    layer_idx: int = -1
+) -> Tuple[RemovableHandle, dict]:
     """
-    Generate sequences from the model with optional beam search.
-    Supports advanced options via **generate_kwargs (e.g., output_attentions).
+    Attaches a forward hook to a specific transformer layer to capture hidden states 
+    during a single forward pass (more memory-efficient than using output_hidden_states=True).
+    Transformer layer = self-attention + FFN + normalization.
 
     Parameters
     ----------
     model : PreTrainedModel
-        The language model to use for generation.
-    inputs : BatchEncoding
-        Tokenized input prompts.
-    tokenizer : PreTrainedTokenizer
-        Tokenizer providing eos and pad token IDs.
-    max_new_tokens : int, optional
-        Maximum number of new tokens to generate.
-    k_beams : int, optional
-        Number of beams to use. If 1, uses sampling. If >1, beam search is enabled.
-    **generate_kwargs : dict
-        Additional keyword arguments passed to `model.generate()`.
+        The Hugging Face causal language model (e.g., GPT, LLaMA).
+    captured_hidden : dict
+        Dictionary used to store the hidden states from the forward pass (will be overwritten).
+        captured_hidden["activations"] of shape (batch_size, seq_len, hidden_size).
+    layer_idx : int
+        Index of the transformer block to hook. Defaults to -1 (the last layer).
+        Use a positive integer if you want to hook an intermediate layer instead.
 
     Returns
-    -------
-    Union[torch.Tensor, Dict[str, torch.Tensor]]
-        - If k_beams == 1:
-            Returns a tensor of generated token IDs: shape (batch_size, prompt_len + gen_len)
-        - If k_beams > 1:
-            Returns a dictionary with keys:
-                - "sequences": the generated token IDs
-                - "beam_indices": the beam path for each token
+    ----------
+    RemovableHandle : A handle object
+        Call `handle.remove()` after generation to remove the hook.
+    call_counter : int 
+        Stores the number of times the hook is activated.
     """
-    with torch.no_grad():
-        outputs = model.generate(
-            **inputs,
-            max_new_tokens=max_new_tokens,
-            do_sample=True    if k_beams == 1 else False,
-            temperature=0.6   if k_beams == 1 else None,
-            top_p=0.9         if k_beams == 1 else None,
-            top_k=50          if k_beams == 1 else None,
-            num_beams=k_beams,
-            use_cache=True, 
-            eos_token_id=tokenizer.eos_token_id,
-            pad_token_id=tokenizer.eos_token_id, # Ensures clean padding (right padding using eos token)
-            output_hidden_states=False,      # We rely on the hook to extract hidden states instead (more memory efficient)
-            return_dict_in_generate=True,    # Needed for access to beam_indices when num_beams > 1
-            early_stopping=False if k_beams == 1 else True, #Generation stops as soon as any sequence hits EOS, even if other candidates have not yet finished.
-            **generate_kwargs                # For future flexibility (e.g., output_attentions, output_scores)
+    # Raise error if layer_idx not in correct range
+    num_layers = len(model.model.layers)
+    if not (layer_idx == -1 or 0 <= layer_idx < num_layers):
+        raise ValueError(
+            f"`layer_idx` must be -1 or in [0, {num_layers - 1}], but got {layer_idx}."
         )
-        return outputs 
+    
+    call_counter = {"count": 0} # count how many times the hook is triggered
+    
+    def hook_fn(module, input, output):
+        """Function called automatically by PyTorch just after
+        the layer has produced its output during the forward pass."""
+        
+        call_counter["count"] += 1 
+        
+        # output is a tuple (hidden_states,) → keep [0]
+        if layer_idx == -1:
+            captured_hidden["activations"] = model.model.norm(output[0].detach())  # post RMSNorm!
+        else:
+            captured_hidden["activations"] = output[0].detach()
+
+    # Register hook on the transformer block
+    # When Pytorch pass through this layer during a forward pass, it also execute hook_fn.
+    handle = model.model.layers[layer_idx].register_forward_hook(hook_fn)
+
+    return handle, call_counter
 
 
 
-def build_generation_attention_mask(
-    gen_ids: torch.Tensor,
-    eos_token_id: int
-) -> torch.Tensor:
+# OLD VERSION: HOOKS ONLY 1 LAYER
+def register_generation_activation_hook(
+    model: PreTrainedModel,
+    captured_hidden_list: List[torch.Tensor],
+    layer_idx: int = -1
+) -> Tuple[RemovableHandle, dict]:
     """
-    Build an attention mask for the generated part of sequences, marking all tokens up to and 
-    including the first EOS token as valid (True), and the rest as padding (False).
+    Attaches a forward hook to a specific transformer layer to capture hidden states
+    during autoregressive text generation i.e., at each decoding step.
+    (more memory-efficient than using output_hidden_states=True).
+    Transformer layer = self-attention + FFN + normalization.
 
     Parameters
     ----------
-    gen_ids : torch.Tensor
-        Tensor of shape (batch_size, gen_len) containing only generated sequences.
-    eos_token_id : int
-        ID of the EOS token used for padding and stopping generation.
+    model : PreTrainedModel
+        The Hugging Face causal language model (e.g., GPT, LLaMA).
+    captured_hidden_list : List[torch.Tensor]
+        A list that will be filled with hidden states for each generation step. 
+        Each tensor has shape (batch_size * num_beams, seq_len, hidden_size).
+    layer_idx : int
+        Index of the transformer block to hook. Defaults to -1 (the last layer).
+        Use a positive integer if you want to hook an intermediate layer instead.
 
     Returns
-    -------
-    torch.Tensor
-        Boolean tensor of shape (batch_size, gen_len), where True marks valid generated tokens.
+    ----------
+    RemovableHandle : A handle object
+        Call `handle.remove()` after generation to remove the hook.
+    call_counter : int 
+        Stores the number of times the hook is activated.
     """
-    batch_size, _ = gen_ids.shape
-
-    # Extract only the generated tokens IDs (excluding the prompt part)
-    gen_len = gen_ids.shape[1]
-
-    # Create a boolean mask with True values where tokens equal to eos_token_id
-    eos_mask = (gen_ids == eos_token_id) # Shape: (batch_size, gen_len)
+    # Raise error if layer_idx not in correct range
+    num_layers = len(model.model.layers)
+    if not (layer_idx == -1 or 0 <= layer_idx < num_layers):
+        raise ValueError(
+            f"`layer_idx` must be -1 or in [0, {num_layers - 1}], but got {layer_idx}."
+        )
     
-    # Default eos position = gen_len (means: no eos -> whole sequence is valid)
-    eos_positions = torch.full((batch_size,), gen_len, dtype=torch.long, device=gen_ids.device)
+    call_counter = {"count": 0} # count how many times the hook is triggered
 
-    # Find first eos position for sequences that have one
-    any_eos = eos_mask.any(dim=1)  # Find which sequences actually contain at least one eos_token_id - Shape: (batch_size,)
-    eos_positions[any_eos] = eos_mask[any_eos].float().argmax(dim=1) # argmax returns the 1st position where eos_token_id == True
+    def hook_fn(module, input, output):
+        """Function called automatically by PyTorch just after
+            the layer has produced its output during the forward pass."""
+        
+        call_counter["count"] += 1 
 
-    # Generate a position index tensor (e.g., [0, 1, ..., gen_len-1]), repeated for each batch item
-    position_ids = torch.arange(gen_len, device=gen_ids.device).unsqueeze(0).expand(batch_size, -1) # Shape: (batch_size, gen_len)
+        # output is a tuple (hidden_states,) → keep [0]
+        if layer_idx == -1:
+            # Capture the final normalized output 
+            captured_hidden_list.append(model.model.norm(output[0]).detach())  # post RMSNorm!
+        else:
+            # Capture raw hidden states before layer normalization
+            captured_hidden_list.append(output[0].detach()) 
+    
+    # Register hook on the transformer block
+    # When Pytorch pass through this layer during forward pass, it also execute hook_fn.
+    handle = model.model.layers[layer_idx].register_forward_hook(hook_fn)
+    
+    return handle, call_counter
 
-    # Final generation attetion mask: True for all positions <= first eos (included)
-    generation_attention_mask = position_ids <= eos_positions.unsqueeze(1) # Shape (batch_size, gen_len)
-
-    return generation_attention_mask.int()
 
 
-
+# OLD VERSION: FOR BEAM SEARCH ONLY
 def align_generation_hidden_states(
     generation_activations: List[torch.Tensor],
     beam_indices: torch.Tensor = None,
@@ -293,6 +204,7 @@ def align_generation_hidden_states(
 
 
 
+# OLD VERSION: FOR BEAM SEARCH ONLY
 def align_prompt_hidden_states(
     prompt_activations: torch.Tensor,
     k_beams: int
@@ -335,287 +247,7 @@ def align_prompt_hidden_states(
 
 
 
-def analyze_single_generation(
-    model: PreTrainedModel,
-    tokenizer: PreTrainedTokenizer,
-    dataset: Dataset,
-    sample_idx: int = 0,
-    build_prompt_fn: Callable[[str, str], str] = None,
-    register_forward_activation_hook_fn: Callable = None,
-    layer_idx: int = -1,
-    extract_token_activations_fn: Callable = None,
-) -> Dict[str, Any]:
-    """
-    Analyze a single sample from the dataset through the full inference pipeline:
-    - Build prompt
-    - Run forward pass and capture hidden states
-    - Extract token-level activations from a specific layer
-    - Generate an answer
-    - Decode output and compute similarity scores with ground-truth
-
-    Also returns timing information for each processing stage.
-
-    Parameters
-    ----------
-    model : PreTrainedModel
-        The causal language model to evaluate (e.g., LLaMA).
-    tokenizer : PreTrainedTokenizer
-        The corresponding tokenizer.
-    dataset : Dataset
-        The input dataset.
-    sample_idx : int
-        Index of the sample to analyze.
-    build_prompt_fn : Callable
-        Function to build a prompt from context and question.
-    register_forward_activation_hook_fn : Callable
-        Function that registers a forward hook on the model during a forward pass. 
-    layer_idx : int
-        Index of the transformer layer to extract activations from (default -1: last layer).
-    extract_token_activations_fn : Callable
-        Function that selects and aggregates token-level activations.
-
-    Returns
-    -------
-    Dict[str, Any]
-        Dictionary with:
-        - prompt, generated and ground-truth answers
-        - similarity scores (ROUGE-L, Sentence-BERT)
-        - whether generation is deemed correct
-        - activations and tensor shapes
-        - timing breakdown
-    """
-    sample = dataset[sample_idx]
-
-    print("========= Analyze one generation  =========")
-    times = {}
-
-    # ==============================
-    # 1. Prompt construction
-    # ==============================
-    t0 = time.time()
-    prompt = build_prompt_fn(sample["context"], sample["question"])
-    answer = sample["answers"]['text']
-    times['prompt_construction'] = time.time() - t0
-    print(f"----- Prompt construction: {times['prompt_construction']:.3f} sec")
-
-    # ==============================
-    # 2. Tokenization
-    # ==============================
-    t1 = time.time()
-    inputs = tokenizer(prompt, truncation=True, padding=True, return_tensors="pt").to(model.device)
-    times['tokenization'] = time.time() - t1
-    print(f"----- Tokenization: {times['tokenization']:.3f} sec")
-
-    t2 = time.time()
-    # ==============================
-    # Capture hidden states with forward hook
-    # ==============================
-    # Hook to collect the hidden states after the forward pass
-    captured_hidden = {}
-    handle, call_counter = register_forward_activation_hook_fn(model, captured_hidden, layer_idx=layer_idx)
-
-    # Pass inputs through the model. When the target layer is reached,
-    # the hook executes and saves its output in captured_hidden.
-    with torch.no_grad():
-        _ = model(**inputs, return_dict=True)
-    # Remove the hook to avoid memory leaks or duplicate logging
-    handle.remove() 
-
-    #print(f"Hook was called {call_counter['count']} times.")
-    if "activations" not in captured_hidden:
-        raise RuntimeError("Hook failed to capture activations.")
-
-    layer_output = captured_hidden["activations"]  # Shape: (batch_size, seq_len, hidden_size)
-
-    # ==============================
-    # Extract token activations from captured layer
-    # ==============================
-    times['layer_output'] = time.time() - t2
-    print(f"----- Token extraction with single forward pass: {times['layer_output']:.3f} sec")
-
-    # Token activations extraction
-    t3 = time.time()
-    selected_token_vecs = extract_token_activations_fn(
-        selected_layer=layer_output,
-        attention_mask=inputs["attention_mask"],
-        device=layer_output.device
-    )
-    times['token_activations'] = time.time() - t3
-
-    # ==============================
-    # Run generation
-    # ==============================
-    t4 = time.time()
-    outputs = generate(model, inputs, tokenizer)
-    outputs_ids = outputs.sequences
-    times['generation'] = time.time() - t4
-    print(f"----- Generation: {times['generation']:.3f} sec")
-
-    # ==============================
-    # Decode generated output
-    # ==============================
-    t5 = time.time()
-    prompt_len = len(inputs["input_ids"][0])
-    generated_answer_ids = outputs_ids[0][prompt_len:]
-    generated_answer = tokenizer.decode(generated_answer_ids, skip_special_tokens=True).strip()
-    times['decoding'] = time.time() - t5
-    print(f"----- Decoding: {times['decoding']:.3f} sec")
-
-    # ==============================
-    # Compute similarity scores
-    # ==============================
-    t6 = time.time()
-    rouge_l_score = rouge_l_simScore(generated_answer, answer) 
-    sbert_sim = sentence_bert_simScore(generated_answer, answer)
-    is_correct = (rouge_l_score >= 0.5) or (sbert_sim >= 0.4)
-    times['similarity_scoring'] = time.time() - t6
-    print(f"----- Similarity scoring: {times['similarity_scoring']:.3f} sec")
-
-    # ==============================
-    # Display results
-    # ==============================
-    print("\n=== Prompt ===")
-    print(prompt)
-    print("\n=== Shapes ===")
-    print(f"Shape - number of tokens: {inputs['input_ids'].shape}")
-    print(f"Shape - selected_layer: {layer_output.shape}")
-    print("\n=== Generated Answer ===")
-    print(generated_answer)
-    print("\n=== Ground-truth Answer ===")
-    print(answer)
-    print("\n=== Similarity Scores ===")
-    print(f"ROUGE-L F1: {rouge_l_score:.4f}")
-    print(f"Sentence-BERT Cosine Similarity: {sbert_sim:.4f}")
-    print(f"Is generated answer correct: {is_correct}")
-
-    return {
-        "prompt": prompt,
-        "generated_answer": generated_answer,
-        "ground_truth_answer": answer,
-        "rouge_l_score": rouge_l_score,
-        "sbert_score": sbert_sim,
-        "is_correct": is_correct,
-        "computation_times": times,
-        "input_shape": inputs['input_ids'].shape,
-        "layer_shape": layer_output.shape,
-        "token_activations": selected_token_vecs,
-    }
-
-
-
-def run_filter_generated_answers_by_similarity(
-    model: PreTrainedModel,
-    tokenizer: PreTrainedTokenizer,
-    dataset: Dataset,
-    batch_size: int = 4,
-    idx_start_sample: int = 0,
-    max_samples: int = 1000,
-    output_path: str = "outputs/all_batch_results",
-    build_prompt_fn: Callable[[str, str], str] = None,
-) -> None:
-    """
-    Generates answers in batch using a decoder-only language model, evaluates their semantic 
-    similarity against ground-truth answers using ROUGE-L and SBERT.
-    The results are saved as individual batch files in a specified pickle directory, 
-    allowing efficient incremental storage and later aggregation.
-
-    An answer is considered correct if:
-        - ROUGE-L ≥ 0.5, or
-        - SBERT ≥ 0.4 (only computed if ROUGE-L < 0.5)
-
-    Parameters
-    ----------
-    model : PreTrainedModel
-        The causal language model to evaluate (e.g., LLaMA).
-    tokenizer : PreTrainedTokenizer
-        The corresponding tokenizer.
-    dataset : Dataset
-        The input dataset.
-    batch_size : int
-        Number of samples per batch.
-    idx_start_sample : int
-        Index of the first sample to process from the dataset.
-    max_samples : int
-        Total number of examples to process from the dataset, starting from idx_start_sample. 
-    output_path : str
-        Path to the directory where extracted answers will be saved as individual pickle batch files.
-    build_prompt_fn : Callable
-        Function to build a prompt from context and question.
-    """
-    for i in tqdm(range(idx_start_sample, idx_start_sample + max_samples, batch_size)):
-        
-        # ==============================
-        # Initialize batch containers
-        # ==============================
-        batch_answers = []               # Generated answers
-        batch_gt_answers = []            # Ground-truth answers
-        batch_is_correct = []            # 0/1 labels indicating correctness
-        batch_dataset_ids = []           # 'id' field from dataset
-        batch_dataset_original_idx = []  # Original indices from dataset
-        batch_rouge_scores = []          # Rouge-L scores
-        batch_sbert_scores = []          # Sentence-Bert scores
-
-        # ==============================
-        # Prepare input batch
-        # ==============================
-        batch = extract_batch(dataset, i, batch_size)
-        prompts = [build_prompt_fn(s["context"], s["question"]) for s in batch]
-        answers = [s["answers"]["text"] for s in batch]
-        inputs = tokenizer(prompts, padding=True, truncation=True, return_tensors="pt").to(model.device)
-
-        # ==============================
-        # Generate model predictions
-        # ==============================
-        outputs = generate(model, inputs, tokenizer)
-        outputs_ids = outputs.sequences 
-        
-        for j in range(len(prompts)):
-            # ==============================
-            # Decode generated tokens
-            # ==============================
-            prompt_len = len(inputs["input_ids"][j]) # Length of prompt j
-            generated_answer_ids = outputs_ids[j][prompt_len:] # Remove prompt prefix to isolate the generated answer
-            generated_answer = tokenizer.decode(generated_answer_ids, skip_special_tokens=True).strip()
-
-            # ==============================
-            # Compute semantic similarity between model's answer and ground-truth
-            # ==============================
-            rouge_l_score = rouge_l_simScore(generated_answer, answers[j])
-            if rouge_l_score >= 0.5:
-                is_correct = True
-                sbert_score = None
-            else:
-                sbert_score = sentence_bert_simScore(generated_answer, answers[j])
-                is_correct = (sbert_score >= 0.4)
-
-            # ==============================
-            # Store per-example results
-            # ==============================
-            batch_dataset_ids.append(batch[j]['id'])
-            batch_dataset_original_idx.append(batch[j]['original_index'])
-            batch_answers.append(generated_answer)
-            batch_gt_answers.append(answers[j])
-            batch_is_correct.append(int(is_correct))
-            batch_rouge_scores.append(rouge_l_score)
-            batch_sbert_scores.append(sbert_score)
-
-        # ==============================
-        # Store results (to file)
-        # ==============================
-        batch_results = {
-            "id": batch_dataset_ids,
-            "original_indices": batch_dataset_original_idx,
-            "gen_answers": batch_answers,
-            "ground_truths": batch_gt_answers,
-            "is_correct": batch_is_correct,
-            "sbert_scores": batch_sbert_scores,
-            "rouge_scores": batch_rouge_scores,
-        }
-         
-        save_batch_pickle(batch_data=batch_results, output_dir=output_path, batch_idx=i)
-   
-
-
+# OLD VERSION: HOOKS ONLY 1 LAYER, COMPUTE ONLY ONE ACTIVATION SCORE
 def run_prompt_activation_extraction(
     model: PreTrainedModel,
     tokenizer: PreTrainedTokenizer,
@@ -765,6 +397,7 @@ def run_prompt_activation_extraction(
 
 
 
+# OLD VERSION: HOOKS ONLY 1 LAYER, COMPUTE ONLY ONE ACTIVATION SCORE
 def run_prompt_and_generation_activation_extraction(
     model: PreTrainedModel,
     tokenizer: PreTrainedTokenizer,
