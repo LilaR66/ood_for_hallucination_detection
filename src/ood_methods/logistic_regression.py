@@ -4,22 +4,24 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
 from typing import Tuple
 
-def train_logistic_regression_on_embeddings(
-    id_test_embeddings: torch.Tensor,
-    od_test_embeddings: torch.Tensor,
+def train_logistic_regression_on_descriptors(
+    id_test_descriptors: torch.Tensor,
+    od_test_descriptors: torch.Tensor,
     random_state: int = 42,
     test_size: float = 0.2,
 ) -> Tuple[LogisticRegression, np.ndarray, np.ndarray, np.ndarray]:
     """
     Train and evaluate a logistic regression classifier to distinguish 
-    in-distribution (ID) from out-of-distribution (OOD) embeddings.
+    in-distribution (ID) from out-of-distribution (OOD) descriptors.
 
     Parameters
     ----------
-    id_test_embeddings : torch.Tensor
-        Embeddings of in-distribution samples. Shape: [n_id_samples, hidden_size]
-    od_test_embeddings : torch.Tensor
-        Embeddings of out-of-distribution samples. Shape: [n_ood_samples, hidden_size]
+    id_test_descriptors : torch.Tensor
+        Descriptors of in-distribution samples (e.g., embeddings or other features
+        derived from hidden representations). Shape: [n_id_samples, feat_dim]
+    od_test_descriptors : torch.Tensor
+        Descriptors of out-of-distribution samples (e.g., embeddings or other features
+        derived from hidden representations). Shape: [n_ood_samples, feat_dim]
     random_state : int, optional (default=42)
         Random seed for reproducibility.
     test_size : float, optional (default=0.2)
@@ -37,11 +39,11 @@ def train_logistic_regression_on_embeddings(
         Indexes of samples used for testing
     """
 
-    # 1. Concatenate embeddings and create labels
-    X = torch.cat([id_test_embeddings, od_test_embeddings], dim=0).cpu().numpy()
+    # 1. Concatenate descriptors and create labels
+    X = torch.cat([id_test_descriptors, od_test_descriptors], dim=0).cpu().numpy()
     y = np.concatenate([
-        np.zeros(id_test_embeddings.shape[0]),  # 0 = ID
-        np.ones(od_test_embeddings.shape[0])    # 1 = OOD
+        np.zeros(id_test_descriptors.shape[0]),  # 0 = ID
+        np.ones(od_test_descriptors.shape[0])    # 1 = OOD
     ])
 
     # 2. Stratified train/test split to preserve class proportions

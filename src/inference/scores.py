@@ -190,7 +190,7 @@ def extract_token_activations(
                 # Compute covariance matrix on features 
                 # ---------------------------------------
                 Z_feat_centered = Z - Z.mean(dim=0, keepdim=True) # (num_valid_tokens, hidden_size)
-                Cov_feat = (Z_feat_centered.t() @ Z_feat_centered) / max(1, Z.shape[0] - 1) # (hidden_size, idden_size)
+                Cov_feat = (Z_feat_centered.t() @ Z_feat_centered) / max(1, Z.shape[0] - 1) # (hidden_size, hidden_size)
                 Cov_feat += alpha * torch.eye(Z.shape[1], device=Z.device, dtype=Z.dtype)
                 feat_var.append(Cov_feat.diag())
             
