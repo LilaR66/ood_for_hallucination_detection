@@ -789,12 +789,13 @@ def run_prompt_and_generation_score_extraction(
                             "{attn_score}": np.ndarray[(batch_size,), float],  
                             ...
                         }
+                        "logits": {
+                            "perplexity": np.ndarray[(batch_size,), float],
+                            "logit_entropy": np.ndarray[(batch_size,), float],
+                            "window_logit_entropy": np.ndarray[(batch_size,), float] 
+                        }
                     },
-                    "logits": {
-                        "perplexity": np.ndarray[(batch_size,), float],
-                        "logit_entropy": np.ndarray[(batch_size,), float],
-                        "window_logit_entropy": np.ndarray[(batch_size,), float] 
-                    }
+                    
                 }
             },
 
