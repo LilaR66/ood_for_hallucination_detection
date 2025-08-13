@@ -46,7 +46,7 @@ Returns
 - You can threshold these scores to separate ID and OOD samples.
 """
 import torch
-from sklearn.preprocessing import normalize
+from sklearn.preprocessing import StandardScaler, normalize
 from typing import Literal, Tuple
 import numpy as np
 try:
@@ -87,8 +87,9 @@ def compute_ocsvm_score(
         Embeddings for out-of-distribution samples to evaluate.
     kernel : str, default='linear'
         Kernel type for the SVM:
-        - 'linear': Use raw embeddings.
+        - 'linear': Use standardized embeddings
         - 'cosine': L2-normalize all embeddings, so the linear kernel computes cosine similarity.
+        - 'rbf': Use standardized embeddings
     nu : float, default=0.1
         An upper bound on the fraction of training errors and a lower bound of the fraction
         of support vectors (0 < nu <= 1). Controls the sensitivity of the decision boundary.
@@ -104,27 +105,35 @@ def compute_ocsvm_score(
 
     Notes
     -----
-    - All embeddings are automatically L2-normalized if 'cosine' of 'rbf' kernel is used.
     - The One-Class SVM is trained only on ID samples.
     - At test time, both ID and OOD samples are scored by the trained model.
     - For GPU acceleration, use ThunderSVM; for CPU, use scikit-learn.
     """
+    # Ensure numpy arrays on CPU
+    X_train    = id_fit_embeddings.detach().cpu().numpy()
+    X_id_test  = id_test_embeddings.detach().cpu().numpy()
+    X_od_test = od_test_embeddings.detach().cpu().numpy()
+
     if kernel == 'linear':
-        X_train_proc = id_fit_embeddings
-        X_id_test_proc = id_test_embeddings
-        X_ood_test_proc = od_test_embeddings
+        # Standardize for linear kernel as it is sensitive to scale
+        scaler = StandardScaler().fit(X_train)   # fit ID only
+        X_train_proc = scaler.transform(X_train)
+        X_id_test_proc = scaler.transform(X_id_test)
+        X_od_test_proc = scaler.transform(X_od_test)
         model = OneClassSVM(kernel='linear', nu=nu) 
     elif kernel == 'cosine':
         # L2-normalize for cosine similarity with linear kernel
-        X_train_proc = normalize(id_fit_embeddings, norm='l2')
-        X_id_test_proc = normalize(id_test_embeddings, norm='l2')
-        X_ood_test_proc = normalize(od_test_embeddings, norm='l2')
+        # (so that cosine similarity = dot product)
+        X_train_proc = normalize(X_train, norm='l2')
+        X_id_test_proc = normalize(X_id_test, norm='l2')
+        X_od_test_proc = normalize(X_od_test, norm='l2')
         model = OneClassSVM(kernel='linear', nu=nu)
     elif kernel == 'rbf':
-        # L2-normalize for stability
-        X_train_proc = normalize(id_fit_embeddings, norm='l2')
-        X_id_test_proc = normalize(id_test_embeddings, norm='l2')
-        X_ood_test_proc = normalize(od_test_embeddings, norm='l2')
+        # Standardize for gaussian kernel as it is sensitive to scale
+        scaler = StandardScaler().fit(X_train)  # fit ID only
+        X_train_proc = scaler.transform(X_train)
+        X_id_test_proc = scaler.transform(X_id_test)
+        X_od_test_proc = scaler.transform(X_od_test)
         # Computation of gamma depending on backend
         if _BACKEND == "thundersvm":
             if gamma == "scale":
@@ -143,7 +152,7 @@ def compute_ocsvm_score(
 
     # Decision function gives anomaly scores: higher = more in-distribution, lower = more outlier
     ocsvm_id_scores = model.decision_function(X_id_test_proc)
-    ocsvm_ood_scores = model.decision_function(X_ood_test_proc)
+    ocsvm_ood_scores = model.decision_function(X_od_test_proc)
 
     ocsvm_id_scores = ocsvm_id_scores.reshape(-1)
     ocsvm_ood_scores = ocsvm_ood_scores.reshape(-1)

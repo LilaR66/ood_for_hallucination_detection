@@ -119,14 +119,16 @@ def compute_cosine_similarity(
     device = id_fit_embeddings.device
 
     # Normalize test embeddings (L2 norm along last dim)
+    # (ensures cosine similarity = dot product)
     id_test_norm = F.normalize(id_test_embeddings, p=2, dim=1)
     od_test_norm = F.normalize(od_test_embeddings, p=2, dim=1)
 
     # Select ID reference centers
     if center_type == 'mean':
         # Compute mean and normalize
-        centers = id_fit_embeddings.mean(dim=0, keepdim=True) # Shape: [1, hidden_size]
-        centers = F.normalize(centers, p=2, dim=1)
+        id_fit_norm = F.normalize(id_fit_embeddings, p=2, dim=1) # normalize each embedding
+        centers = id_fit_norm.mean(dim=0, keepdim=True) # Shape: [1, hidden_size]
+        centers = F.normalize(centers, p=2, dim=1) # normalize centers to obtain spherical centroids
     elif center_type == 'kmeans':
         centers = compute_kmeans_centroids(id_fit_embeddings, k=k, normalize=True, seed=seed)  # Shape: [k, hidden_size]
     elif center_type == 'kmedoids':

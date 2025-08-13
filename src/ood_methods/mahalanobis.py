@@ -45,6 +45,7 @@ import numpy as np
 from typing import Literal, Tuple
 from src.ood_methods.ood_utils import compute_kmeans_centroids, compute_kmedoids_centers
 from src.analysis.evaluation import compute_metrics
+from sklearn.covariance import LedoitWolf
 
 def compute_mahalanobis_distance(
     id_fit_embeddings: torch.Tensor,
@@ -53,7 +54,6 @@ def compute_mahalanobis_distance(
     seed: int = 44,
     center_type: Literal["mean", "kmeans", "kmedoids"] = "mean",
     k: int = 5,
-    reg_eps: float = 1e-6
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
     Performs OOD detection by computing Mahalanobis distance between test embeddings
@@ -87,8 +87,6 @@ def compute_mahalanobis_distance(
         Method to define the reference ID centers.
     k : int
         Number of clusters or medoids to use (if method is "kmeans" or "kmedoids").
-    reg_eps : float
-        Regularization added to diagonal of covariance for numerical stability.
 
     Returns
     -------
@@ -100,17 +98,25 @@ def compute_mahalanobis_distance(
         Shape: [n_ood_test_samples]
     """
     # Convert to numpy
-    id_fit_np = id_fit_embeddings.detach().cpu().numpy().astype(np.float32)
-    id_test_np = id_test_embeddings.detach().cpu().numpy().astype(np.float32)
-    od_test_np = od_test_embeddings.detach().cpu().numpy().astype(np.float32)
+    id_fit_np  = id_fit_embeddings.detach().cpu().numpy().astype(np.float64)
+    id_test_np = id_test_embeddings.detach().cpu().numpy().astype(np.float64)
+    od_test_np = od_test_embeddings.detach().cpu().numpy().astype(np.float64)
 
     # Compute covariance matrix on ID fit set
+    # Regularized covariance matrix
+    '''
+    reg_eps = 1e-6
     cov = np.cov(id_fit_np, rowvar=False)
-    # Regularize for numerical stability
-    cov += reg_eps * np.eye(cov.shape[0])
+    cov += reg_eps * np.eye(cov.shape[0]) # Regularize for numerical stability
     inv_cov = np.linalg.inv(cov)
+    '''
+    # Ledoit-Wolf covariance matrix: 
+    lw = LedoitWolf().fit(id_fit_np)   # fit only on ID data
+    inv_cov = lw.precision_            # inverse cov stable 
 
     # Select ID reference centers
+    # No normalization/standarization for Mahalanobis distance as the method already 
+    # integrates scale and correlations within the covariance matrix. 
     if center_type == 'mean':
         centers = np.mean(id_fit_np, axis=0, keepdims=True)  # Shape: [1, hidden_size]
     elif center_type == 'kmeans':
@@ -127,10 +133,10 @@ def compute_mahalanobis_distance(
         Returns [n_samples, k]
         """
         # Differences between each point and each center
-        diffs = X[:, None, :] - centers[None, :, :]             # Shape: [n_samples, k, hidden_size]
+        diffs = X[:, None, :] - centers[None, :, :]        # Shape: [n_samples, k, hidden_size]
         # Mahalanobis: sqrt((x-mu)^T @ inv_cov @ (x-mu))
-        left = np.einsum('nkd,dd->nkd', diffs, inv_cov)         # Shape: [n_samples, k, hidden_size]
-        dists = np.sqrt(np.einsum('nkd,nkd->nk', left, diffs))  # Shape: [n_samples, k]
+        left = np.einsum('nkd,dd->nkd', diffs, inv_cov)    # Shape: [n_samples, k, hidden_size]
+        dists = np.sqrt(np.maximum(np.einsum('nkd,nkd->nk', left, diffs)),0) # Shape: [n_samples, k]
         return dists
 
     # Compute Mahalanobis distances

@@ -1,6 +1,8 @@
 import torch
 import numpy as np
 from sklearn.linear_model import LogisticRegression
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler, RobustScaler
 from sklearn.model_selection import train_test_split
 from typing import Tuple
 
@@ -52,11 +54,17 @@ def train_logistic_regression_on_descriptors(
         X, y, indices, test_size=test_size, random_state=random_state, stratify=y
     )
 
-    # 3. Train logistic regression
-    clf = LogisticRegression(max_iter=1000, random_state=random_state)
+    # 3. Build classifier with standard scaling
+    scaler = StandardScaler()
+    clf = Pipeline([
+        ("scaler", scaler),
+        ("logreg", LogisticRegression(max_iter=1000, random_state=random_state))
+    ])
+
+    # 4. Train logistic regression
     clf.fit(X_train, y_train)
 
-    # 4. Predict and evaluate on test set
+    # 5. Predict and evaluate on test set
     y_pred = clf.predict(X_test)
 
     return clf, y_test, y_pred, idx_test

@@ -43,6 +43,7 @@ Returns
 
 import numpy as np
 from sklearn.ensemble import IsolationForest
+from sklearn.preprocessing import StandardScaler
 from typing import Tuple
 import torch
 
@@ -101,6 +102,12 @@ def isolation_forest(
         X_id_test = id_test_embeddings
         X_ood_test = od_test_embeddings
 
+    # Apply standard scaler
+    scaler = StandardScaler().fit(X_train)  
+    X_train = scaler.transform(X_train)
+    X_id_test = scaler.transform(X_id_test)
+    X_ood_test = scaler.transform(X_ood_test)
+
     # Train Isolation Forest on ID embeddings
     clf = IsolationForest(
         n_estimators=n_estimators,
@@ -112,5 +119,6 @@ def isolation_forest(
     # The higher, the more abnormal. 
     forest_id_scores = clf.score_samples(X_id_test)
     forest_ood_scores = clf.score_samples(X_ood_test)
+    
     # Flip sign to match "higher = more OOD"
     return - forest_id_scores, - forest_ood_scores
