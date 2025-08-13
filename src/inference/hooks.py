@@ -161,7 +161,7 @@ def patched_LlamaAttention_forward(
 
 
 
-def register_generation_activation_hook(
+def register_activation_hook(
     model: PreTrainedModel,
     captured_hidden_lists: List[List[torch.Tensor]],  
     layers_idx_list: List[int]
@@ -227,7 +227,7 @@ def register_generation_activation_hook(
 
 
 
-def register_generation_attention_hook(
+def register_attention_hook(
     model: PreTrainedModel,
     captured_attn_lists: List[List[torch.Tensor]],
     layers_idx_list: List[int]

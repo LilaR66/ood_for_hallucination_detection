@@ -48,8 +48,8 @@ from src.data_reader.squad_loader import (
 )
 from src.inference.run_extraction import (
     run_filter_generated_answers_by_similarity, 
-    run_prompt_score_extraction, 
-    run_prompt_and_generation_score_extraction,
+    run_prompt_descriptor_extraction, 
+    run_prompt_and_generation_descriptor_extraction,
 )
 from src.inference.generation_utils import build_prompt
 
@@ -242,7 +242,7 @@ def run_filter_generated_answers_by_similarity_pipeline(
     del model, tokenizer, merged, id_fit_answers, ids_correct_answers, id_fit_correct_dataset
 
 
-def retrieve_fit_inputs_scores_pipeline(
+def retrieve_fit_inputs_descriptor_pipeline(
     model_name: str,
     seed: int,
     output_path: str,
@@ -252,15 +252,15 @@ def retrieve_fit_inputs_scores_pipeline(
     batch_size: int = 16,
     build_prompt_fn: Callable = None,
     layers: List[int] = [-1],  
-    hidden_scores: List[str] = ["average", "last", "max", "first_generated", "token_svd_score", "feat_var"],
-    attn_scores: List[str] = ["attn_eig_prod"],
-    logit_scores: List[str] = ["perplexity", "logit_entropy", "window_logit_entropy"],
+    hidden_agg: List[str] = ["avg_emb", "last_emb", "max_emb", "first_gen_emb", "hidden_score", "feat_var_emb"],
+    attn_agg: List[str] = ["attn_score"],
+    logit_agg: List[str] = ["perplexity_score", "logit_entropy_score", "window_logit_entropy_score"],
     logit_config: dict = {"top_k": 50, "window_size": 1, "stride": 1},
     start_offset: int = 0,
     end_offset: int = 0
 ) -> None:
     """
-    Extract and save activations/attention/logits scores for the in-distribution (ID) training set.
+    Extract and save activations/attention/logits descriptors for the in-distribution (ID) training set.
 
     Parameters
     ----------
@@ -283,17 +283,16 @@ def retrieve_fit_inputs_scores_pipeline(
         Function to build a prompt from context and question.
     layers : List[int]
         List of indices of the transformer layers to extract activations from (default: [-1] for last layer).
-    hidden_scores : List[str], optional
+    hidden_agg : List[str], optional
         List of aggregation modes to compute on token activations. Possible modes include:
-            "average", "last", "max", "first_generated", "token_svd_score", "feat_var".
-        These modes are passed to `extract_token_activations` for aggregation. Default includes the above.
-    attn_scores : List[str], optional
-        List of attention-based scores to compute. Supported: "attn_eig_prod".
-    logit_scores : List[str], optional
-        List of logit-based scores to compute. Supported:
-            "perplexity", "logit_entropy", "window_logit_entropy".
+            "avg_emb", "last_emb", "max_emb", "first_gen_emb", "hidden_score", "feat_var_emb".
+    attn_agg : List[str], optional
+        List of attention-based descriptors to compute. Supported: "attn_eig_prod".
+    logit_agg : List[str], optional
+        List of logit-based descriptors to compute. Supported:
+            "perplexity_score", "logit_entropy_score", "window_logit_entropy_score".
     logit_config : dict, optional
-        Configuration dictionary for logit-based scoring functions, with keys such as:
+        Configuration dictionary for logit-based descriptor functions, with keys such as:
             - "top_k": int, number of top logits considered (default 50)
             - "window_size": int, window size for windowed entropy (default 1)
             - "stride": int, stride for windowed entropy (default 1)
@@ -322,11 +321,11 @@ def retrieve_fit_inputs_scores_pipeline(
     else:
         id_fit_dataset = prepare_fit_dataset(seed, shuffle, select_slice)
 
-    # Retrieve ID scores and save results
+    # Retrieve ID descriptors and save results
     # -----------------------------------
-    print("\nStart retrieving ID fit scores from inputs...")
+    print("\nStart retrieving ID fit descriptors from inputs...")
     t0 = time.time()
-    run_prompt_score_extraction(
+    run_prompt_descriptor_extraction(
         model=model,
         tokenizer=tokenizer,
         dataset=id_fit_dataset,
@@ -337,16 +336,16 @@ def retrieve_fit_inputs_scores_pipeline(
         output_path=output_path,
         build_prompt_fn=build_prompt_fn,
         layers=layers,  
-        hidden_scores=hidden_scores,
-        attn_scores=attn_scores,
-        logit_scores=logit_scores,
+        hidden_agg=hidden_agg,
+        attn_agg=attn_agg,
+        logit_agg=logit_agg,
         logit_config=logit_config,
         start_offset=start_offset,
         end_offset=end_offset
     )
     t1 = time.time()
     print("...end!")
-    print_time_elapsed(t0, t1, label="ID scores: ")
+    print_time_elapsed(t0, t1, label="ID descriptors: ")
 
     # Merge all batches, save as a single file and delete batch directory
     merged = merge_batches_and_cleanup(directory=output_path, delete=True, confirm=True) 
@@ -355,7 +354,7 @@ def retrieve_fit_inputs_scores_pipeline(
     del id_fit_dataset, model, tokenizer, merged, 
 
 
-def retrieve_test_inputs_scores_pipeline(
+def retrieve_test_inputs_descriptor_pipeline(
     model_name: str,
     seed: int,
     id_output_path: str,
@@ -365,15 +364,15 @@ def retrieve_test_inputs_scores_pipeline(
     batch_size: int = 16,
     build_prompt_fn: Callable = None,
     layers: List[int] = [-1],  
-    hidden_scores: List[str] = ["average", "last", "max", "first_generated", "token_svd_score", "feat_var"],
-    attn_scores: List[str] = ["attn_eig_prod"],
-    logit_scores: List[str] = ["perplexity", "logit_entropy", "window_logit_entropy"],
+    hidden_agg: List[str] = ["avg_emb", "last_emb", "max_emb", "first_gen_emb", "hidden_score", "feat_var_emb"],
+    attn_agg: List[str] = ["attn_score"],
+    logit_agg: List[str] = ["perplexity_score", "logit_entropy_score", "window_logit_entropy_score"],
     logit_config: dict = {"top_k": 50, "window_size": 1, "stride": 1},
     start_offset: int = 0,
     end_offset: int = 0
 ) -> None:
     """
-    Extract and save activations/attention/logits scores for the in-distribution (ID)  
+    Extract and save activations/attention/logits descriptors for the in-distribution (ID)  
     and out-of-distribution (OOD) test sets.
 
     Parameters
@@ -396,17 +395,16 @@ def retrieve_test_inputs_scores_pipeline(
         Function to build a prompt from context and question.
     layers : List[int]
         List of indices of the transformer layers to extract activations from (default: [-1] for last layer).
-    hidden_scores : List[str], optional
+    hidden_agg : List[str], optional
         List of aggregation modes to compute on token activations. Possible modes include:
-            "average", "last", "max", "first_generated", "token_svd_score", "feat_var".
-        These modes are passed to `extract_token_activations` for aggregation. Default includes the above.
-    attn_scores : List[str], optional
-        List of attention-based scores to compute. Supported: "attn_eig_prod".
-    logit_scores : List[str], optional
-        List of logit-based scores to compute. Supported:
-            "perplexity", "logit_entropy", "window_logit_entropy".
+            "avg_emb", "last_emb", "max_emb", "first_gen_emb", "hidden_score", "feat_var_emb".
+    attn_agg : List[str], optional
+        List of attention-based descriptors to compute. Supported: "attn_eig_prod".
+    logit_agg : List[str], optional
+        List of logit-based descriptors to compute. Supported:
+            "perplexity_score", "logit_entropy_score", "window_logit_entropy_score".
     logit_config : dict, optional
-        Configuration dictionary for logit-based scoring functions, with keys such as:
+        Configuration dictionary for logit-based descriptors functions, with keys such as:
             - "top_k": int, number of top logits considered (default 50)
             - "window_size": int, window size for windowed entropy (default 1)
             - "stride": int, stride for windowed entropy (default 1)
@@ -429,12 +427,12 @@ def retrieve_test_inputs_scores_pipeline(
     # -----------------------------------
     id_test_dataset, od_test_dataset = prepare_test_dataset(seed, shuffle, select_slice)
 
-    # Retrieve test scores and save results 
+    # Retrieve test descriptors and save results 
     # -----------------------------------
-    # Extract OOD test scores
-    print("\nStart retrieving test impossible scores from inputs...")
+    # Extract OOD test descriptors
+    print("\nStart retrieving test impossible descriptors from inputs...")
     t2 = time.time()
-    run_prompt_score_extraction(
+    run_prompt_descriptor_extraction(
         model=model,
         tokenizer=tokenizer,
         dataset=od_test_dataset,
@@ -445,21 +443,21 @@ def retrieve_test_inputs_scores_pipeline(
         output_path=od_output_path,
         build_prompt_fn=build_prompt_fn,
         layers=layers,  
-        hidden_scores=hidden_scores,
-        attn_scores=attn_scores,
-        logit_scores=logit_scores,
+        hidden_agg=hidden_agg,
+        attn_agg=attn_agg,
+        logit_agg=logit_agg,
         logit_config=logit_config,
         start_offset=start_offset,
         end_offset=end_offset
     )
     t3 = time.time()
     print("...end!")
-    print_time_elapsed(t2, t3, label="Impossible test scores: ")
+    print_time_elapsed(t2, t3, label="Impossible test descriptors: ")
 
-    # Extract ID test scores
-    print("\nStart retrieving test possible scores from inputs...")
+    # Extract ID test descriptors
+    print("\nStart retrieving test possible descriptors from inputs...")
     t4 = time.time()
-    run_prompt_score_extraction(
+    run_prompt_descriptor_extraction(
         model=model,
         tokenizer=tokenizer,
         dataset=id_test_dataset,
@@ -470,16 +468,16 @@ def retrieve_test_inputs_scores_pipeline(
         output_path=id_output_path,
         build_prompt_fn=build_prompt_fn,
         layers=layers,  
-        hidden_scores=hidden_scores,
-        attn_scores=attn_scores,
-        logit_scores=logit_scores,
+        hidden_agg=hidden_agg,
+        attn_agg=attn_agg,
+        logit_agg=logit_agg,
         logit_config=logit_config,
         start_offset=start_offset,
         end_offset=end_offset
     )
     t5 = time.time()
     print("end!")
-    print_time_elapsed(t4, t5, label="Possible test scores: ")
+    print_time_elapsed(t4, t5, label="Possible test descriptors: ")
 
     # Merge all batches, save as a single file and delete batch directory
     od_merged = merge_batches_and_cleanup(directory=od_output_path, delete=True, confirm=True) 
@@ -489,7 +487,7 @@ def retrieve_test_inputs_scores_pipeline(
     del od_test_dataset, id_test_dataset, model, tokenizer, od_merged, id_merged
 
 
-def retrieve_fit_answers_scores_pipeline(
+def retrieve_fit_answers_descriptor_pipeline(
     model_name: str,
     seed: int,
     output_path: str,
@@ -499,16 +497,16 @@ def retrieve_fit_answers_scores_pipeline(
     batch_size: int = 16,
     build_prompt_fn: Callable = None,
     layers: List[int] = [-1],  
-    hidden_scores: List[str] = ["average", "last", "max", "first_generated", "token_svd_score", "feat_var"],
-    attn_scores: List[str] = ["attn_eig_prod"],
-    logit_scores: List[str] = ["perplexity", "logit_entropy", "window_logit_entropy"],
+    hidden_agg: List[str] = ["avg_emb", "last_emb", "max_emb", "first_gen_emb", "hidden_score", "feat_var_emb"],
+    attn_agg: List[str] = ["attn_score"],
+    logit_agg: List[str] = ["perplexity_score", "logit_entropy_score", "window_logit_entropy_score"],
     logit_config: dict = {"top_k": 50, "window_size": 1, "stride": 1},
     activation_source: Literal["prompt", "generation", "promptGeneration"] = "generation",
     start_offset: int = 0,
     end_offset: int = 0,
 ) -> None:
     """
-    Extract and save activations/attention/logits scores for the in-distribution (ID) 
+    Extract and save activations/attention/logits descriptors for the in-distribution (ID) 
     training set of the generated answers.
 
     Parameters
@@ -532,17 +530,16 @@ def retrieve_fit_answers_scores_pipeline(
         Function to build a prompt from context and question.
     layers : List[int]
         List of indices of the transformer layers to extract activations from (default: [-1] for last layer).
-    hidden_scores : List[str], optional
+    hidden_agg : List[str], optional
         List of aggregation modes to compute on token activations. Possible modes include:
-            "average", "last", "max", "first_generated", "token_svd_score", "feat_var".
-        These modes are passed to `extract_token_activations` for aggregation. Default includes the above.
-    attn_scores : List[str], optional
-        List of attention-based scores to compute. Supported: "attn_eig_prod".
-    logit_scores : List[str], optional
-        List of logit-based scores to compute. Supported:
-            "perplexity", "logit_entropy", "window_logit_entropy".
+            "avg_emb", "last_emb", "max_emb", "first_gen_emb", "hidden_score", "feat_var_emb".
+    attn_agg : List[str], optional
+        List of attention-based descriptors to compute. Supported: "attn_eig_prod".
+    logit_agg : List[str], optional
+        List of logit-based descriptors to compute. Supported:
+            "perplexity_score", "logit_entropy_score", "window_logit_entropy_score".
     logit_config : dict, optional
-        Configuration dictionary for logit-based scoring functions, with keys such as:
+        Configuration dictionary for logit-based descriptors functions, with keys such as:
             - "top_k": int, number of top logits considered (default 50)
             - "window_size": int, window size for windowed entropy (default 1)
             - "stride": int, stride for windowed entropy (default 1)
@@ -574,11 +571,11 @@ def retrieve_fit_answers_scores_pipeline(
     else:
         id_fit_dataset = prepare_fit_dataset(seed, shuffle, select_slice)
 
-    # Retrieve ID scores and save results
+    # Retrieve ID descriptors and save results
     # -----------------------------------
-    print(f"\nStart retrieving ID fit scores from {activation_source}...")
+    print(f"\nStart retrieving ID fit descriptors from {activation_source}...")
     t0 = time.time()
-    run_prompt_and_generation_score_extraction(
+    run_prompt_and_generation_descriptor_extraction(
         model=model,
         tokenizer=tokenizer,
         dataset=id_fit_dataset,
@@ -590,16 +587,16 @@ def retrieve_fit_answers_scores_pipeline(
         build_prompt_fn=build_prompt_fn,
         layers=layers,  
         activation_source=activation_source,
-        hidden_scores=hidden_scores,
-        attn_scores=attn_scores,
-        logit_scores=logit_scores,
+        hidden_agg=hidden_agg,
+        attn_agg=attn_agg,
+        logit_agg=logit_agg,
         logit_config=logit_config,
         start_offset=start_offset,
         end_offset=end_offset
     )
     t1 = time.time()
     print("...end!")
-    print_time_elapsed(t0, t1, label="ID scores: ")
+    print_time_elapsed(t0, t1, label="ID descriptors: ")
 
     # Merge all batches, save as a single file and delete batch directory
     merged = merge_batches_and_cleanup(directory=output_path, delete=True, confirm=True) 
@@ -609,7 +606,7 @@ def retrieve_fit_answers_scores_pipeline(
 
 
 
-def retrieve_test_answers_scores_pipeline(
+def retrieve_test_answers_descriptor_pipeline(
     model_name: str,
     seed: int,
     id_output_path: str,
@@ -619,16 +616,16 @@ def retrieve_test_answers_scores_pipeline(
     batch_size: int = 16,
     build_prompt_fn: Callable = None,
     layers: List[int] = [-1],  
-    hidden_scores: List[str] = ["average", "last", "max", "first_generated", "token_svd_score", "feat_var"],
-    attn_scores: List[str] = ["attn_eig_prod"],
-    logit_scores: List[str] = ["perplexity", "logit_entropy", "window_logit_entropy"],
+    hidden_agg: List[str] = ["avg_emb", "last_emb", "max_emb", "first_gen_emb", "hidden_score", "feat_var_emb"],
+    attn_agg: List[str] = ["attn_score"],
+    logit_agg: List[str] = ["perplexity_score", "logit_entropy_score", "window_logit_entropy_score"],
     logit_config: dict = {"top_k": 50, "window_size": 1, "stride": 1},
     activation_source: Literal["prompt", "generation", "promptGeneration"] = "generation",
     start_offset: int = 0,
     end_offset: int = 0,
 ) -> None:
     """
-    Extract and save activations/attention/logits scores for the in-distribution (ID) 
+    Extract and save activations/attention/logits descriptors for the in-distribution (ID) 
     and out-of-distribution (OOD) test sets of the generated answers.
 
     Parameters
@@ -651,17 +648,16 @@ def retrieve_test_answers_scores_pipeline(
         Function to build a prompt from context and question.
     layers : List[int]
         List of indices of the transformer layers to extract activations from (default: [-1] for last layer).
-    hidden_scores : List[str], optional
+    hidden_agg : List[str], optional
         List of aggregation modes to compute on token activations. Possible modes include:
-            "average", "last", "max", "first_generated", "token_svd_score", "feat_var".
-        These modes are passed to `extract_token_activations` for aggregation. Default includes the above.
-    attn_scores : List[str], optional
-        List of attention-based scores to compute. Supported: "attn_eig_prod".
-    logit_scores : List[str], optional
-        List of logit-based scores to compute. Supported:
-            "perplexity", "logit_entropy", "window_logit_entropy".
+            "avg_emb", "last_emb", "max_emb", "first_gen_emb", "hidden_score", "feat_var_emb".
+    attn_agg : List[str], optional
+        List of attention-based descriptors to compute. Supported: "attn_eig_prod".
+    logit_agg : List[str], optional
+        List of logit-based descriptors to compute. Supported:
+            "perplexity_score", "logit_entropy_score", "window_logit_entropy_score".
     logit_config : dict, optional
-        Configuration dictionary for logit-based scoring functions, with keys such as:
+        Configuration dictionary for logit-based descriptors functions, with keys such as:
             - "top_k": int, number of top logits considered (default 50)
             - "window_size": int, window size for windowed entropy (default 1)
             - "stride": int, stride for windowed entropy (default 1)
@@ -689,12 +685,12 @@ def retrieve_test_answers_scores_pipeline(
     # -----------------------------------
     id_test_dataset, od_test_dataset = prepare_test_dataset(seed, shuffle, select_slice)
 
-    # Retrieve test scores and save results 
+    # Retrieve test descriptors and save results 
     # -----------------------------------
-    # Extract OOD test scores
-    print(f"\nStart retrieving test impossible scores from {activation_source}...")
+    # Extract OOD test descriptors
+    print(f"\nStart retrieving test impossible descriptors from {activation_source}...")
     t2 = time.time()
-    run_prompt_and_generation_score_extraction(
+    run_prompt_and_generation_descriptor_extraction(
         model=model,
         tokenizer=tokenizer,
         dataset=od_test_dataset,
@@ -706,21 +702,21 @@ def retrieve_test_answers_scores_pipeline(
         build_prompt_fn=build_prompt_fn,
         layers=layers,  
         activation_source=activation_source,
-        hidden_scores=hidden_scores,
-        attn_scores=attn_scores,
-        logit_scores=logit_scores,
+        hidden_agg=hidden_agg,
+        attn_agg=attn_agg,
+        logit_agg=logit_agg,
         logit_config=logit_config,
         start_offset=start_offset,
         end_offset=start_offset
     )
     t3 = time.time()
     print("...end!")
-    print_time_elapsed(t2, t3, label="Impossible test scores: ")
+    print_time_elapsed(t2, t3, label="Impossible test descriptors: ")
 
-    # Extract ID test scores
-    print(f"\nStart retrieving test possible scores from {activation_source}...")
+    # Extract ID test descriptors
+    print(f"\nStart retrieving test possible descriptors from {activation_source}...")
     t4 = time.time()
-    run_prompt_and_generation_score_extraction(
+    run_prompt_and_generation_descriptor_extraction(
         model=model,
         tokenizer=tokenizer,
         dataset=id_test_dataset,
@@ -732,16 +728,16 @@ def retrieve_test_answers_scores_pipeline(
         build_prompt_fn=build_prompt_fn,
         layers=layers,  
         activation_source=activation_source,
-        hidden_scores=hidden_scores,
-        attn_scores=attn_scores,
-        logit_scores=logit_scores,
+        hidden_agg=hidden_agg,
+        attn_agg=attn_agg,
+        logit_agg=logit_agg,
         logit_config=logit_config,
         start_offset=start_offset,
         end_offset=end_offset
     )
     t5 = time.time()
     print("end!")
-    print_time_elapsed(t4, t5, label="Possible test scores: ")
+    print_time_elapsed(t4, t5, label="Possible test descriptors: ")
 
      # Merge all batches, save as a single file and delete batch directory
     od_merged = merge_batches_and_cleanup(directory=od_output_path, delete=True, confirm=True) 
@@ -755,21 +751,21 @@ def retrieve_test_answers_scores_pipeline(
 # ====================================
 # Global variables  
 # ====================================
-SEED = 777 #44
-BATCH_SIZE = 16 #32
+SEED = 777 #42, 44, 777, 123, 2025, 42
+BATCH_SIZE = 16
 MODEL_NAME = "meta-llama/Llama-2-7b-chat-hf"
-OUTPUT_DIR = "../results/raw/small_dataset_correct_split_allScores/"
-PLOT_DIR   = "../results/figures/small_dataset_correct_split_allScores/"
+OUTPUT_DIR = f"../results/raw/small_dataset_correct_split_allConfig_{SEED}/"
+PLOT_DIR   = f"../results/figures/small_dataset_correct_split_allConfig_{SEED}/"
 ACTIVATION_SOURCE = "promptGeneration" # can be 'generation', 'prompt', 'promptGeneration'
 START_OFFSET = 0 #40
 END_OFFSET = 0   #-4
 
-HIDDEN_SCORES = ["average", "last", "max", "first_generated", "token_svd_score", "feat_var"]
-ATTN_SCORES = ["attn_eig_prod"]
-LOGIT_SCORES = ["perplexity", "logit_entropy", "window_logit_entropy"]
+HIDDEN_AGG = ["avg_emb", "last_emb", "max_emb", "first_gen_emb", "hidden_score", "feat_var_emb"]
+ATTN_AGG = ["attn_score"]
+LOGIT_AGG = ["perplexity_score", "logit_entropy_score", "window_logit_entropy_score"]
 LOGIT_CONFIG = {"top_k": 50, "window_size": 1, "stride": 1}
 
-STR_SCORES = 'all_hidden_attn_logit'
+STR_AGG = 'All'
 
 LAYERS = list(range(1, 31, 2)) + [-1] # (List[int]) - Layers from witch retrieve the scores 
 STR_LAYERS = '1:32:2' #"_".join(str(x) for x in LAYERS)
@@ -795,29 +791,27 @@ def main() -> None:
             build_prompt_fn=build_prompt
         )
 
-    OUTPUT_PROMPT_TITLE = f"_layer{STR_LAYERS}_score_{STR_SCORES}_prompt_so{START_OFFSET}_eo{END_OFFSET}"
-    OUTPUT_GEN_TITLE =  f"_layer{STR_LAYERS}_score_{STR_SCORES}_{ACTIVATION_SOURCE}_so{START_OFFSET}_eo{END_OFFSET}"
+    OUTPUT_TITLE =  f"_layer{STR_LAYERS}_agg{STR_AGG}_{ACTIVATION_SOURCE}_so{START_OFFSET}_eo{END_OFFSET}_seed{SEED}"
 
     print(f"\n\n===========================================================")
-    print(f"Processing OUTPUT_PROMPT_TITLE : {OUTPUT_PROMPT_TITLE}")
-    print(f"           OUTPUT_GEN_TITLE    : {OUTPUT_GEN_TITLE}")
+    print(f"Processing OUTPUT_TITLE : {OUTPUT_TITLE}")
     print(f"===========================================================\n\n")
 
     if False: 
         clear_cache()
-        retrieve_fit_inputs_scores_pipeline(
+        retrieve_fit_inputs_descriptor_pipeline(
             model_name=MODEL_NAME,
             seed=SEED,
-            output_path=f"{OUTPUT_DIR}id_fit_results{OUTPUT_PROMPT_TITLE}",
+            output_path=f"{OUTPUT_DIR}id_fit_results{OUTPUT_TITLE}",
             custom_dataset_path="../data/datasets/id_fit_correct_dataset.pkl",
             shuffle=True,
             select_slice=(0,10_000),
             batch_size=BATCH_SIZE,
             build_prompt_fn=build_prompt,
             layers=LAYERS,  
-            hidden_scores=HIDDEN_SCORES,
-            attn_scores=ATTN_SCORES,
-            logit_scores=LOGIT_SCORES,
+            hidden_agg=HIDDEN_AGG,
+            attn_agg=ATTN_AGG,
+            logit_agg=LOGIT_AGG,
             logit_config=LOGIT_CONFIG,
             start_offset=START_OFFSET,
             end_offset=END_OFFSET
@@ -826,19 +820,19 @@ def main() -> None:
 
     if False: 
         clear_cache()
-        retrieve_test_inputs_scores_pipeline(
+        retrieve_test_inputs_descriptor_pipeline(
             model_name=MODEL_NAME,
             seed=SEED,
-            id_output_path=f"{OUTPUT_DIR}id_test_results{OUTPUT_PROMPT_TITLE}",
-            od_output_path=f"{OUTPUT_DIR}od_test_results{OUTPUT_PROMPT_TITLE}",
+            id_output_path=f"{OUTPUT_DIR}id_test_results{OUTPUT_TITLE}",
+            od_output_path=f"{OUTPUT_DIR}od_test_results{OUTPUT_TITLE}",
             shuffle=True,
             select_slice=(0,1000),
             batch_size=BATCH_SIZE,
             build_prompt_fn=build_prompt,
             layers=LAYERS,  
-            hidden_scores=HIDDEN_SCORES,
-            attn_scores=ATTN_SCORES,
-            logit_scores=LOGIT_SCORES,
+            hidden_agg=HIDDEN_AGG,
+            attn_agg=ATTN_AGG,
+            logit_agg=LOGIT_AGG,
             logit_config=LOGIT_CONFIG,
             start_offset=START_OFFSET,
             end_offset=END_OFFSET
@@ -847,19 +841,19 @@ def main() -> None:
 
     if True:
         clear_cache()
-        retrieve_fit_answers_scores_pipeline(
+        retrieve_fit_answers_descriptor_pipeline(
             model_name=MODEL_NAME,
             seed=SEED,
-            output_path=f"{OUTPUT_DIR}id_fit_results{OUTPUT_GEN_TITLE}",
-            custom_dataset_path="../data/datasets/id_fit_correct_dataset_small_allConfig_correct_split.pkl",
+            output_path=f"{OUTPUT_DIR}id_fit_results{OUTPUT_TITLE}",
+            custom_dataset_path=f"../data/datasets/id_fit_correct_dataset_small_seed{SEED}.pkl",
             shuffle=True,
             select_slice=(0,10_000), 
             batch_size=BATCH_SIZE,
             build_prompt_fn=build_prompt,
             layers=LAYERS,  
-            hidden_scores=HIDDEN_SCORES,
-            attn_scores=ATTN_SCORES,
-            logit_scores=LOGIT_SCORES,
+            hidden_agg=HIDDEN_AGG,
+            attn_agg=ATTN_AGG,
+            logit_agg=LOGIT_AGG,
             logit_config=LOGIT_CONFIG,
             activation_source=ACTIVATION_SOURCE,
             start_offset=START_OFFSET,
@@ -869,19 +863,19 @@ def main() -> None:
     
     if True:
         clear_cache()
-        retrieve_test_answers_scores_pipeline(
+        retrieve_test_answers_descriptor_pipeline(
             model_name=MODEL_NAME,
             seed=SEED,
-            id_output_path=f"{OUTPUT_DIR}id_test_results{OUTPUT_GEN_TITLE}",
-            od_output_path=f"{OUTPUT_DIR}od_test_results{OUTPUT_GEN_TITLE}",
+            id_output_path=f"{OUTPUT_DIR}id_test_results{OUTPUT_TITLE}",
+            od_output_path=f"{OUTPUT_DIR}od_test_results{OUTPUT_TITLE}",
             shuffle=True,
             select_slice=(0,1000), # 8760 big wrong split, 5920 big corr split, 1000 small all config
             batch_size=BATCH_SIZE,
             build_prompt_fn=build_prompt,
             layers=LAYERS,  
-            hidden_scores=HIDDEN_SCORES,
-            attn_scores=ATTN_SCORES,
-            logit_scores=LOGIT_SCORES,
+            hidden_agg=HIDDEN_AGG,
+            attn_agg=ATTN_AGG,
+            logit_agg=LOGIT_AGG,
             logit_config=LOGIT_CONFIG,
             activation_source=ACTIVATION_SOURCE,
             start_offset=START_OFFSET,

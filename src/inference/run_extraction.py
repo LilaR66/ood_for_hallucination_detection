@@ -60,8 +60,8 @@ from src.inference.generation_utils import (
 )
 from src.inference.hooks import (
     patched_LlamaAttention_forward,
-    register_generation_activation_hook,
-    register_generation_attention_hook,
+    register_activation_hook,
+    register_attention_hook,
     verify_call_counters,
     )
 from src.inference.scores import (
@@ -356,7 +356,7 @@ def run_filter_generated_answers_by_similarity(
    
 
 
-def run_prompt_score_extraction(
+def run_prompt_descriptor_extraction(
     model: PreTrainedModel,
     tokenizer: PreTrainedTokenizer,
     dataset: Dataset,
@@ -367,9 +367,9 @@ def run_prompt_score_extraction(
     output_path: str = "outputs/all_batch_results.pkl",
     build_prompt_fn: Callable[[str, str], str] = None,
     layers: List[int] = [-1],  
-    hidden_scores: List[str] = ["average", "last", "max", "first_generated", "token_svd_score", "feat_var"],
-    attn_scores: List[str] = ["attn_eig_prod"],
-    logit_scores: List[str] = ["perplexity", "logit_entropy", "window_logit_entropy"],
+    hidden_agg: List[str] = ["avg_emb", "last_emb", "max_emb", "first_gen_emb", "hidden_score", "feat_var_emb"],
+    attn_agg: List[str] = ["attn_score"],
+    logit_agg: List[str] = ["perplexity_score", "logit_entropy_score", "window_logit_entropy_score"],
     logit_config: dict = {"top_k": 50, "window_size": 1, "stride": 1},
     start_offset : int = 0,
     end_offset : int = 0,
@@ -377,10 +377,10 @@ def run_prompt_score_extraction(
     """
     Runs batched inference on a dataset using a decoder-only language model.
     For each batch, it runs a forward pass on the prompt and extracts token-level hidden 
-    activations, attention maps and logit scores from specified transformer layers.
+    activations, attention maps and logit descriptors from specified transformer layers.
 
-    The function supports multiple aggregation modes for the activations (`hidden_scores`), attention-based 
-    scores (`attn_scores`), and logit-based scores (`logit_scores`). The `logit_config` argument provides 
+    The function supports multiple descriptor aggregation modes for the activations (`hidden_agg`),
+    attentions (`attn_agg`), and logits (`logit_agg`). The `logit_config` argument provides 
     configuration parameters for logit-based score functions.
     
     Hidden states and attention maps are captured via forward hooks, 
@@ -413,17 +413,17 @@ def run_prompt_score_extraction(
         Function to build a prompt from context and question.
     layers : List[int]
         List of indices of the transformer layers to extract activations from (default: [-1] for last layer).
-    hidden_scores : List[str], optional
+    hidden_agg : List[str], optional
         List of aggregation modes to compute on token activations. Possible modes include:
-            "average", "last", "max", "first_generated", "token_svd_score", "feat_var".
+            "avg_emb", "last_emb", "max_emb", "first_gen_emb", "hidden_score", "feat_var_emb".
         These modes are passed to `extract_token_activations` for aggregation. Default includes the above.
-    attn_scores : List[str], optional
-        List of attention-based scores to compute. Supported: "attn_eig_prod".
-    logit_scores : List[str], optional
-        List of logit-based scores to compute. Supported:
-            "perplexity", "logit_entropy", "window_logit_entropy".
+    attn_agg : List[str], optional
+        List of attention-based descriptors to compute. Supported: "attn_score".
+    logit_agg : List[str], optional
+        List of logit-based descriptors to compute. Supported:
+            "perplexity_score", "logit_entropy_score", "window_logit_entropy_score".
     logit_config : dict, optional
-        Configuration dictionary for logit-based scoring functions, with keys such as:
+        Configuration dictionary for logit-based descriptors functions, with keys such as:
             - "top_k": int, number of top logits considered (default 50)
             - "window_size": int, window size for windowed entropy (default 1)
             - "stride": int, stride for windowed entropy (default 1)
@@ -434,7 +434,7 @@ def run_prompt_score_extraction(
     
     Returns
     -------
-    Union[List[dict], None]
+     Union[List[dict], None]
         If `save_to_pkl` is False, returns a list of dictionaries, one per batch, with each element
          of the list having the following structure:
             {
@@ -443,23 +443,26 @@ def run_prompt_score_extraction(
                 "context": List[str],
                 "question": List[str],
                 "gt_answers": List[str],        # Ground-truth reference answers
-                "gen_answers": List[str],       # Generated model answers
-                "scores": {
+                "descriptors": {
                     "layer_{layer_idx}": {
                         "hidden": { 
-                            "{mode}": np.ndarray[(batch_size, hidden_size), float], 
-                            ... # one entry per mode in hidden_scores
+                            "{mode}": np.ndarray[(batch_size, hidden_size), float],
+                             # for mode in {'avg_emb','last_emb','max_emb','first_gen_emb','feat_var_emb'}.
+                            "{mode}": np.ndarray[(batch_size,), float],
+                             # if mode=='hidden_score' 
+                            ... 
                         },
                         "attention": {
                             "{attn_score}": np.ndarray[(batch_size,), float],  
                             ...
                         }
+                        "logit": {
+                            "perplexity_score": np.ndarray[(batch_size,), float],
+                            "logit_entropy_score": np.ndarray[(batch_size,), float],
+                            "window_logit_entropy_score": np.ndarray[(batch_size,), float] 
+                        }
                     },
-                    "logits": {
-                        "perplexity": np.ndarray[(batch_size,), float],
-                        "logit_entropy": np.ndarray[(batch_size,), float],
-                        "window_logit_entropy": np.ndarray[(batch_size,), float] 
-                    }
+                    
                 }
             },
 
@@ -501,13 +504,13 @@ def run_prompt_score_extraction(
         # activations_lists[l] = [act_prompt], 
         # activations_lists[l][0] of shape: (batch_size, prompt_len, hidden_size) 
         activations_lists = [[] for _ in layers]  # one empty list per layer 
-        handle_act, call_counter_act = register_generation_activation_hook(model, activations_lists, layers)
+        handle_act, call_counter_act = register_activation_hook(model, activations_lists, layers)
 
         # This hook collects the activations at each decoding step. For layer l: 
         # attentions_lists[l] = [attn_prompt], 
         # activations_lists[l][0] of shape: (batch_size, n_heads, prompt_len, prompt_len)
         attentions_lists = [[] for _ in layers]  # one empty list per layer
-        handle_attn, call_counter_attn = register_generation_attention_hook(model, attentions_lists, layers)
+        handle_attn, call_counter_attn = register_attention_hook(model, attentions_lists, layers)
         
         # ----------------------------------------------------------
         # [FOWARD PASS] Run model with hooks to capture intermediate states
@@ -538,9 +541,9 @@ def run_prompt_score_extraction(
 
 
         # **********************************************************
-        # [LAYER LOOP] Extract activation and attention-based scores for each specified layer 
+        # [LAYER LOOP] Extract activation and attention-based descriptors for each specified layer 
         # **********************************************************
-        save_layers_scores = {}
+        save_layers_descriptors = {}
 
         for l, layer_idx in enumerate(layers):
 
@@ -554,28 +557,28 @@ def run_prompt_score_extraction(
             prompt_attentions=attentions[0]        
 
             # ------------------------------------------------------
-            # [HIDDEN SCORES] Extract token-level activations/hidden-states
+            # [HIDDEN DESCRIPTORS] Extract token-level activations/hidden-states
             # ------------------------------------------------------
-            if hidden_scores is not None and len(hidden_scores) > 0:
+            if hidden_agg is not None and len(hidden_agg) > 0:
                 # Return only the token activations from the prompt
                 selected_token_vecs = extract_token_activations(
                         selected_layer=prompt_activations, 
                         attention_mask=prompt_attention_mask, 
                         device=prompt_activations.device,
-                        modes=hidden_scores,
+                        modes=hidden_agg,
                     ) # (batch_size, hidden_size)
  
                 # Save results to dict
                 hidden_results = {}
-                for mode in hidden_scores:
+                for mode in hidden_agg:
                     if mode in selected_token_vecs:
                         hidden_results[mode] = selected_token_vecs[mode].cpu().numpy()
-                save_layers_scores.setdefault(f"layer_{layer_idx}", {}).update({"hidden": hidden_results})
+                save_layers_descriptors.setdefault(f"layer_{layer_idx}", {}).update({"hidden": hidden_results})
 
             # ------------------------------------------------------
-            # [ATTENTION SCORES] Extract attention eigenvalue-based metric
+            # [ATTENTION DESCRIPTORS] Extract attention eigenvalue-based metric
             # ------------------------------------------------------
-            if attn_scores is not None and 'attn_eig_prod' in attn_scores:
+            if attn_agg is not None and 'attn_score' in attn_agg:
                 attn_eig_prod = compute_attn_eig_prod(
                         prompt_attentions=prompt_attentions, 
                         generation_attentions=None,
@@ -584,13 +587,13 @@ def run_prompt_score_extraction(
                         mode='prompt',
                 )
                 # Save results to dict
-                save_layers_scores.setdefault(f"layer_{layer_idx}", {}).update({"attention": {"attn_eig_prod": attn_eig_prod}}) 
+                save_layers_descriptors.setdefault(f"layer_{layer_idx}", {}).update({"attention": {"attn_score": attn_eig_prod}}) 
 
 
             # ------------------------------------------------------
-            # [LOGIT SCORES] Compute metrics from model logits
+            # [LOGIT DESCRIPTORS] Compute metrics from model logits
             # ------------------------------------------------------
-            if logit_scores is not None and len(logit_scores) > 0: 
+            if logit_agg is not None and len(logit_agg) > 0: 
                 logits_results = {}
                 
                 # If this is not the last layer, the only way to compute logits is from logitLens and activations
@@ -604,7 +607,7 @@ def run_prompt_score_extraction(
                 else: #last layer
                     prompt_logits = outputs.logits # (batch, prompt_len, vocab_size)
                 
-                if 'perplexity' in logit_scores:
+                if 'perplexity_score' in logit_agg:
                     perplexity = compute_perplexity(
                         prompt_logits=prompt_logits, 
                         gen_logits=None,
@@ -617,11 +620,11 @@ def run_prompt_score_extraction(
                         min_k=None
                     )
                     # Save results to dict
-                    logits_results['perplexity'] = perplexity 
+                    logits_results['perplexity_score'] = perplexity 
 
-                if 'logit_entropy' in logit_scores:
+                if 'logit_entropy_score' in logit_agg:
                     if logit_config is None:
-                        raise ValueError("logit_entropy is required but logit_config is None")
+                        raise ValueError("logit_entropy_score is required but logit_config is None")
                     logit_entropy = compute_logit_entropy(
                         prompt_logits=prompt_logits,
                         gen_logits=None,
@@ -634,11 +637,11 @@ def run_prompt_score_extraction(
                         stride=None
                     )
                     # Save results to dict
-                    logits_results['logit_entropy'] = logit_entropy 
+                    logits_results['logit_entropy_score'] = logit_entropy 
         
-                if 'window_logit_entropy' in logit_scores:
+                if 'window_logit_entropy_score' in logit_agg:
                     if logit_config is None:
-                        raise ValueError("window_logit_entropy is required but logit_config is None")
+                        raise ValueError("window_logit_entropy_score is required but logit_config is None")
                     window_logit_entropy = compute_logit_entropy(
                         prompt_logits=prompt_logits,
                         gen_logits=None,
@@ -651,10 +654,10 @@ def run_prompt_score_extraction(
                         stride=logit_config['stride'] 
                     )
                     # Save results to dict
-                    logits_results['window_logit_entropy'] = window_logit_entropy 
+                    logits_results['window_logit_entropy_score'] = window_logit_entropy 
                     
                 if logits_results:
-                    save_layers_scores.setdefault(f"layer_{layer_idx}", {}).update({"logits": logits_results})
+                    save_layers_descriptors.setdefault(f"layer_{layer_idx}", {}).update({"logit": logits_results})
 
         # **********************************************************
         # [END LAYER LOOP] 
@@ -669,7 +672,7 @@ def run_prompt_score_extraction(
             "context": [s['context'] for s in batch],
             "question": [s['question'] for s in batch],
             "gt_answers": [s['answers'] for s in batch],
-            "scores": {**save_layers_scores}
+            "scores": {**save_layers_descriptors}
         }
 
         from src.data_reader.pickle_io import save_batch_pickle
@@ -684,7 +687,7 @@ def run_prompt_score_extraction(
 
 
 
-def run_prompt_and_generation_score_extraction(
+def run_prompt_and_generation_descriptor_extraction(
     model: PreTrainedModel,
     tokenizer: PreTrainedTokenizer,
     dataset: Dataset,
@@ -696,9 +699,9 @@ def run_prompt_and_generation_score_extraction(
     build_prompt_fn: Callable[[str, str], str] = None,
     layers: List[int] = [-1],  
     activation_source: Literal["prompt", "generation", "promptGeneration"] = "generation",
-    hidden_scores: List[str] = ["average", "last", "max", "first_generated", "token_svd_score", "feat_var"],
-    attn_scores: List[str] = ["attn_eig_prod"],
-    logit_scores: List[str] = ["perplexity", "logit_entropy", "window_logit_entropy"],
+    hidden_agg: List[str] = ["avg_emb", "last_emb", "max_emb", "first_gen_emb", "hidden_score", "feat_var_emb"],
+    attn_agg: List[str] = ["attn_score"],
+    logit_agg: List[str] = ["perplexity_score", "logit_entropy_score", "window_logit_entropy_score"],
     logit_config: dict = {"top_k": 50, "window_size": 1, "stride": 1},
     start_offset : int = 0,
     end_offset : int = 0,
@@ -706,11 +709,11 @@ def run_prompt_and_generation_score_extraction(
     """
     Runs batched inference on a dataset using a decoder-only language model.
     For each batch, it performs text generation and extracts token-level 
-    hidden activations, attention maps and logit scores from specified transformer layers.
+    hidden activations, attention maps and logit descriptors from specified transformer layers.
     (both from the prompt and the generated text depending on `activation_source`) 
 
-    The function supports multiple aggregation modes for the activations (`hidden_scores`), attention-based 
-    scores (`attn_scores`), and logit-based scores (`logit_scores`). The `logit_config` argument provides 
+    The function supports multiple descriptor aggregation modes for the activations (`hidden_agg`),
+    attentions (`attn_agg`), and logits (`logit_agg`). The `logit_config` argument provides 
     configuration parameters for logit-based score functions.
     
     Hidden states and attention maps are captured via forward hooks during generation, 
@@ -748,17 +751,17 @@ def run_prompt_and_generation_score_extraction(
         - "prompt": only from the prompt
         - "generation": only from the generated answer
         - "promptGeneration": prompt and generation answer both concatenated
-    hidden_scores : List[str], optional
+    hidden_agg : List[str], optional
         List of aggregation modes to compute on token activations. Possible modes include:
-            "average", "last", "max", "first_generated", "token_svd_score", "feat_var".
+            "avg_emb", "last_emb", "max_emb", "first_gen_emb", "hidden_score", "feat_var_emb".
         These modes are passed to `extract_token_activations` for aggregation. Default includes the above.
-    attn_scores : List[str], optional
-        List of attention-based scores to compute. Supported: "attn_eig_prod".
-    logit_scores : List[str], optional
-        List of logit-based scores to compute. Supported:
-            "perplexity", "logit_entropy", "window_logit_entropy".
+    attn_agg : List[str], optional
+        List of attention-based descriptors to compute. Supported: "hidden_score".
+    logit_agg : List[str], optional
+        List of logit-based descriptors to compute. Supported:
+            "perplexity_score", "logit_entropy_score", "window_logit_entropy_score".
     logit_config : dict, optional
-        Configuration dictionary for logit-based scoring functions, with keys such as:
+        Configuration dictionary for logit-based descriptors functions, with keys such as:
             - "top_k": int, number of top logits considered (default 50)
             - "window_size": int, window size for windowed entropy (default 1)
             - "stride": int, stride for windowed entropy (default 1)
@@ -779,20 +782,23 @@ def run_prompt_and_generation_score_extraction(
                 "question": List[str],
                 "gt_answers": List[str],        # Ground-truth reference answers
                 "gen_answers": List[str],       # Generated model answers
-                "scores": {
+                "descriptors": {
                     "layer_{layer_idx}": {
                         "hidden": { 
-                            "{mode}": np.ndarray[(batch_size, hidden_size), float], 
-                            ... # one entry per mode in hidden_scores
+                            "{mode}": np.ndarray[(batch_size, hidden_size), float],
+                             # for mode in {'avg_emb','last_emb','max_emb','first_gen_emb','feat_var_emb'}.
+                            "{mode}": np.ndarray[(batch_size,), float],
+                             # if mode=='hidden_score' 
+                            ... 
                         },
                         "attention": {
                             "{attn_score}": np.ndarray[(batch_size,), float],  
                             ...
                         }
-                        "logits": {
-                            "perplexity": np.ndarray[(batch_size,), float],
-                            "logit_entropy": np.ndarray[(batch_size,), float],
-                            "window_logit_entropy": np.ndarray[(batch_size,), float] 
+                        "logit": {
+                            "perplexity_score": np.ndarray[(batch_size,), float],
+                            "logit_entropy_score": np.ndarray[(batch_size,), float],
+                            "window_logit_entropy_score": np.ndarray[(batch_size,), float] 
                         }
                     },
                     
@@ -859,7 +865,7 @@ def run_prompt_and_generation_score_extraction(
         # activations_lists[l] = [act_prompt, act_gen_step1, ..., act_gen_step49] of length 50, if max_new_tokens=50.
         # activations_lists[l][k] of shape: (batch_size, seq_len, hidden_size) 
         activations_lists = [[] for _ in layers]  # one empty list per layer 
-        handle_act, call_counter_act = register_generation_activation_hook(model, activations_lists, layers)
+        handle_act, call_counter_act = register_activation_hook(model, activations_lists, layers)
 
         # This hook collects the activations at each decoding step. For layer l: 
         # attentions_lists[l] = [attn_prompt, attn_gen_step1, ..., attn_gen_step49], of length 50, if max_new_tokens=50.
@@ -867,7 +873,7 @@ def run_prompt_and_generation_score_extraction(
         #   tgt_seq_len: length of the sequence the model is currently producing (query)
         #   src_seq_len: length of the sequence the model is focusing on (key/value)
         attentions_lists = [[] for _ in layers]  # one empty list per layer
-        handle_attn, call_counter_attn = register_generation_attention_hook(model, attentions_lists, layers)
+        handle_attn, call_counter_attn = register_attention_hook(model, attentions_lists, layers)
         
         # ----------------------------------------------------------
         # [GENERATION] Run model with hooks to capture intermediate states
@@ -893,7 +899,7 @@ def run_prompt_and_generation_score_extraction(
         # ----------------------------------------------------------
         # [FOWARD PASS] Forward pass to the model to retrieve prompt logits 
         # ----------------------------------------------------------
-        if logit_scores is not None and len(logit_scores) > 0:
+        if logit_agg is not None and len(logit_agg) > 0:
             gen_logits = torch.stack(outputs.logits, dim=1) 
             with torch.no_grad():
                 prompt_logits = model(input_ids=inputs["input_ids"]).logits
@@ -941,9 +947,9 @@ def run_prompt_and_generation_score_extraction(
         truncated_prompt_and_gen_attention_mask = prompt_and_gen_attention_mask[:,:-1] # (batch_size, prompt_len + gen_len-1)
 
         # **********************************************************
-        # [LAYER LOOP] Extract activation and attention-based scores for each specified layer 
+        # [LAYER LOOP] Extract activation and attention-based descriptors for each specified layer 
         # **********************************************************
-        save_layers_scores = {}
+        save_layers_descriptors = {}
 
         for l, layer_idx in enumerate(layers):
 
@@ -974,16 +980,16 @@ def run_prompt_and_generation_score_extraction(
             ) # (batch_size, prompt_len + gen_len, hidden_size)
             
             # ------------------------------------------------------
-            # [HIDDEN SCORES] Extract token-level activations/hidden-states
+            # [HIDDEN DESCRIPTORS] Extract token-level activations/hidden-states
             # ------------------------------------------------------
-            if hidden_scores is not None and len(hidden_scores) > 0:
+            if hidden_agg is not None and len(hidden_agg) > 0:
                 if activation_source == "generation":
                     # Return only the token activations from the generated answer 
                     selected_token_vecs = extract_token_activations(               
                             selected_layer=stacked_generation_activations, 
                             attention_mask=truncated_generation_attention_mask, 
                             device=stacked_generation_activations.device,
-                            modes=hidden_scores,
+                            modes=hidden_agg,
                         ) # (batch_size, hidden_size)
                     
                 elif activation_source == "prompt":    
@@ -992,7 +998,7 @@ def run_prompt_and_generation_score_extraction(
                             selected_layer=prompt_activations, 
                             attention_mask=prompt_attention_mask, 
                             device=prompt_activations.device,
-                            modes=hidden_scores,
+                            modes=hidden_agg,
                         ) # (batch_size, hidden_size)
                     
                 else: # activation_source == "promptGeneration"
@@ -1002,22 +1008,22 @@ def run_prompt_and_generation_score_extraction(
                             attention_mask=truncated_prompt_and_gen_attention_mask, 
                             device=prompt_and_gen_activations.device,
                             skip_length=prompt_len,
-                            modes=hidden_scores,
+                            modes=hidden_agg,
                             # skip_length: exclude prompt from computation if 
                             # mode=='first_generated' in `extract_token_activations_fn`
                         ) # (batch_size, hidden_size)
 
                 # Save results to dict
                 hidden_results = {}
-                for mode in hidden_scores:
+                for mode in hidden_agg:
                     if mode in selected_token_vecs:
                         hidden_results[mode] = selected_token_vecs[mode].cpu().numpy()
-                save_layers_scores.setdefault(f"layer_{layer_idx}", {}).update({"hidden": hidden_results})
+                save_layers_descriptors.setdefault(f"layer_{layer_idx}", {}).update({"hidden": hidden_results})
 
             # ------------------------------------------------------
-            # [ATTENTION SCORES] Extract attention eigenvalue-based metric
+            # [ATTENTION DESCRIPTORS] Extract attention eigenvalue-based metric
             # ------------------------------------------------------
-            if attn_scores is not None and 'attn_eig_prod' in attn_scores:
+            if attn_agg is not None and 'attn_score' in attn_agg:
                 attn_eig_prod = compute_attn_eig_prod(
                         prompt_attentions=prompt_attentions, 
                         generation_attentions=generation_attentions,
@@ -1026,13 +1032,13 @@ def run_prompt_and_generation_score_extraction(
                         mode=activation_source,
                 )
                 # Save results to dict
-                save_layers_scores.setdefault(f"layer_{layer_idx}", {}).update({"attention": {"attn_eig_prod": attn_eig_prod}}) 
+                save_layers_descriptors.setdefault(f"layer_{layer_idx}", {}).update({"attention": {"attn_score": attn_eig_prod}}) 
 
 
             # ------------------------------------------------------
-            # [LOGIT SCORES] Compute metrics from model logits
+            # [LOGIT DESCRIPTORS] Compute metrics from model logits
             # ------------------------------------------------------
-            if logit_scores is not None and len(logit_scores) > 0: 
+            if logit_agg is not None and len(logit_agg) > 0: 
                 logits_results = {}
 
                 # If this is not the last layer, the only way to compute logits is from logitLens and activations
@@ -1053,7 +1059,7 @@ def run_prompt_and_generation_score_extraction(
                     gen_logits = torch.stack(outputs.logits, dim=1)  # (batch, gen_len, vocab_size)
                     prepend_last_prompt_logit = False
 
-                if 'perplexity' in logit_scores:
+                if 'perplexity_score' in logit_agg:
                     perplexity = compute_perplexity(
                         prompt_logits=prompt_logits, 
                         gen_logits=gen_logits,
@@ -1066,11 +1072,11 @@ def run_prompt_and_generation_score_extraction(
                         min_k=None
                     )
                     # Save results to dict
-                    logits_results['perplexity'] = perplexity
+                    logits_results['perplexity_score'] = perplexity
                 
-                if 'logit_entropy' in logit_scores:
+                if 'logit_entropy_score' in logit_agg:
                     if logit_config is None:
-                        raise ValueError("logit_entropy is required but logit_config is None")
+                        raise ValueError("logit_entropy_score is required but logit_config is None")
                     logit_entropy = compute_logit_entropy(
                         prompt_logits=prompt_logits,
                         gen_logits=gen_logits,
@@ -1083,11 +1089,11 @@ def run_prompt_and_generation_score_extraction(
                         stride=None
                     )
                     # Save results to dict
-                    logits_results['logit_entropy'] = logit_entropy
+                    logits_results['logit_entropy_score'] = logit_entropy
 
-                if 'window_logit_entropy' in logit_scores:
+                if 'window_logit_entropy_score' in logit_agg:
                     if logit_config is None:
-                        raise ValueError("window_logit_entropy is required but logit_config is None")
+                        raise ValueError("window_logit_entropy_score is required but logit_config is None")
                     window_logit_entropy = compute_logit_entropy(
                         prompt_logits=prompt_logits,
                         gen_logits=gen_logits,
@@ -1100,10 +1106,10 @@ def run_prompt_and_generation_score_extraction(
                         stride=logit_config['stride'] 
                     )
                     # Save results to dict
-                    logits_results['window_logit_entropy'] = window_logit_entropy
+                    logits_results['window_logit_entropy_score'] = window_logit_entropy
 
                 if logits_results:
-                    save_layers_scores.setdefault(f"layer_{layer_idx}", {}).update({"logits": logits_results})
+                    save_layers_descriptors.setdefault(f"layer_{layer_idx}", {}).update({"logit": logits_results})
 
         # **********************************************************
         # [END LAYER LOOP] 
@@ -1119,7 +1125,7 @@ def run_prompt_and_generation_score_extraction(
             "question": [s['question'] for s in batch],
             "gt_answers": [s['answers'] for s in batch],
             "gen_answers": gen_answers,
-            "scores":  {**save_layers_scores},
+            "scores":  {**save_layers_descriptors},
         }
 
         from src.data_reader.pickle_io import save_batch_pickle

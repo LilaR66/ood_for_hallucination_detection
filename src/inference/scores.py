@@ -12,9 +12,9 @@ Main Features
 -------------
 - ACTIVATION/HIDDEN STATES scores:
     - Flexible aggregation of token activations with multiple modes  
-        (average, max, last token, first_generated)
+        (avg_emb, max_emb, last_emb, first_gen_emb)
     - Computation of scores based on centered Gram matrix, covariance, and SVD decomposition
-        (token_svd_score, feat_var)
+        (hidden_score, feat_var_emb)
 
 - ATTENTION scores:
     - Attention score calculations inspired by eigenvalues of attention maps
@@ -40,9 +40,9 @@ def extract_token_activations(
     attention_mask: torch.Tensor,
     device: torch.device,
     modes: List[Literal[
-        "average", "last", "max", "first_generated", 
-        "token_svd_score", "feat_var"
-    ]] = ["average"],
+        "avg_emb", "last_emb", "max_emb", "first_gen_emb", 
+        "hidden_score", "feat_var_emb"
+    ]] = ["avg_emb"],
     skip_length: Optional[int] = None,
     alpha: int = 0.001,
 ) -> Dict[str, torch.Tensor]:
@@ -70,12 +70,12 @@ def extract_token_activations(
     modes : List[str]
         List of aggregation modes to compute. Computed using only valid tokens where attention_mask == 1.
         Supported:
-        - "average": Mean activation vector across valid tokens. Shape: (batch_size, hidden_size)
-        - "max": Element-wise max activation across valid tokens. Shape: (batch_size, hidden_size)
-        - "last": Activation vector of last valid token in each sequence. Shape: (batch_size, hidden_size)
-        - "first_generated": Activation of the first generated valid token in each sequence. Shape: (batch_size, hidden_size)
+        - "avg_emb": Mean activation vector across valid tokens. Shape: (batch_size, hidden_size)
+        - "max_emb": Element-wise max activation across valid tokens. Shape: (batch_size, hidden_size)
+        - "last_emb": Activation vector of last valid token in each sequence. Shape: (batch_size, hidden_size)
+        - "first_gen_emb": Activation of the first generated valid token in each sequence. Shape: (batch_size, hidden_size)
              If skip_length is provided, selects the token starting from that offset. 
-        - "token_svd_score": Mean log singular value of the centered Gram matrix over tokens. Shape (batch_size,)
+        - "hidden_score": Mean log singular value of the centered Gram matrix over tokens. Shape (batch_size,)
             The Gram matrix is computed as Gram_token = Z·J·Z^T, where J is the centering matrix on features.
             It quantifies the pairwise similarity between token representations after removing the mean value 
             of each feature across tokens. Note: This is not a classical covariance matrix.
@@ -84,10 +84,10 @@ def extract_token_activations(
             indicate more redundancy or alignment.
             NOTE: Implementation inpired by "LLM-Check: Investigating Detection of Hallucinations in 
             Large Language Models" (Sriramanan et al. 2024)
-        - "feat_var": Diagonal of the centered feature covariance matrix (variances). Shape: (batch_size, hidden_size)
+        - "feat_var_emb": Diagonal of the centered feature covariance matrix (variances). Shape: (batch_size, hidden_size)
 
     skip_length : Optional[int]
-        If provided, used to explicitly select the first generated token (useful for "first_generated" mode).
+        If provided, used to explicitly select the first generated token (useful for "first_gen_emb" mode).
     alpha : float
         Regularization parameter added to the covariance matrix.
 
@@ -95,8 +95,8 @@ def extract_token_activations(
     -------
     Dict[str, torch.Tensor or np.ndarray]
         Dictionary mapping each mode to its result:
-            - (batch_size, hidden_size) for "average", "max", "last", "first_generated", "feat_var"
-            - (batch_size,) for "token_svd_score"
+            - (batch_size, hidden_size) for "avg_emb", "max_emb", "last_emb", "first_gen_emb", "feat_var_emb"
+            - (batch_size,) for "hidden_score"
     """
 
     batch_size, seq_len, hidden_size = selected_layer.shape
@@ -108,49 +108,49 @@ def extract_token_activations(
     # =======================================
     # Select the first token with optional offset `skip_length`
     # =======================================
-    if "first_generated" in modes:
+    if "first_gen_emb" in modes:
         batch_indices = torch.arange(batch_size, device=device)
         if skip_length is not None:
             first_indices = torch.full((batch_size,), skip_length, device=device, dtype=torch.long)
         else:
             first_indices = (attention_mask == 1).float().argmax(dim=1)
         first = selected_layer[batch_indices, first_indices] # Shape: (batch_size, hidden_size)
-        aggregated_tokens["first_generated"] = first
+        aggregated_tokens["first_gen_emb"] = first
 
     # =======================================
     # Select the last token 
     # =======================================
-    if "last" in modes:
+    if "last_emb" in modes:
         last_indices = attention_mask.shape[1] - 1 - attention_mask.flip(dims=[1]).float().argmax(dim=1)
         batch_indices = torch.arange(batch_size, device=device)
         last = selected_layer[batch_indices, last_indices]  # Shape: (batch_size, hidden_size)
-        aggregated_tokens["last"] = last
+        aggregated_tokens["last_emb"] = last
 
     # =======================================
     # Apply mask and compute aggregation 
     # =======================================
-    if "average" in modes or "max" in modes:
+    if "avg_emb" in modes or "max_emb" in modes:
         # Add one dimension for the broadcast on hidden_size
         mask_float = attention_mask.float().unsqueeze(-1)  # (batch_size, num_valid_tokens, 1)
         # Apply the mask to the activations: zero out tokens outside the target interval
         masked = selected_layer * mask_float
         #  Count the number of selected tokens for each sequence (avoid division by zero with clamp)
         counts = mask_float.sum(dim=1).clamp(min=1e-6)
-        if "average" in modes:
+        if "avg_emb" in modes:
             # Compute the mean activation vector for each sequence over the selected interval
             avg = masked.sum(dim=1) / counts # Shape: (batch_size, hidden_size)
-            aggregated_tokens["average"] = avg
-        if "max" in modes:
+            aggregated_tokens["avg_emb"] = avg
+        if "max_emb" in modes:
             # Replace padding with -inf to exclude from max calculation
             masked_max = masked.masked_fill(mask_float.logical_not(), float('-inf'))
             # Extract maximum values across sequence dimension
             max_vals, _ = masked_max.max(dim=1) # Shape: (batch_size, hidden_size)
-            aggregated_tokens["max"] = max_vals
+            aggregated_tokens["max_emb"] = max_vals
 
     # =======================================
     # Covariance-based metrics
     # =======================================
-    if any(m in modes for m in ["token_svd_score", "feat_var"]):
+    if any(m in modes for m in ["hidden_score", "feat_var_emb"]):
         token_svd_score = [] 
         feat_var = []
         
@@ -167,7 +167,7 @@ def extract_token_activations(
             if Z.dtype != torch.float32:
                 Z = Z.to(torch.float32)
 
-            if "token_svd_score" in modes:
+            if "hidden_score" in modes:
                 # Compute Gram matrix on tokens : Gram_token = Z·J·Z^T
                 # ---------------------------------------
                 # Assumes Z is in full precision
@@ -186,7 +186,7 @@ def extract_token_activations(
                 token_eigscore = torch.log(token_svdvals).mean()  # mult by 2 missing from the paper? 
                 token_svd_score.append(token_eigscore)
 
-            if "feat_var" in modes:
+            if "feat_var_emb" in modes:
                 # Compute covariance matrix on features 
                 # ---------------------------------------
                 Z_feat_centered = Z - Z.mean(dim=0, keepdim=True) # (num_valid_tokens, hidden_size)
@@ -196,10 +196,10 @@ def extract_token_activations(
             
         # Return scores
         # ---------------------------------------
-        if "feat_var" in modes:
-            aggregated_tokens["feat_var"] = torch.stack(feat_var, dim=0) # (batch_size, hidden_size) 
-        if "token_svd_score" in modes:
-            aggregated_tokens["token_svd_score"] = torch.stack(token_svd_score) # (batch_size,) 
+        if "feat_var_emb" in modes:
+            aggregated_tokens["feat_var_emb"] = torch.stack(feat_var, dim=0) # (batch_size, hidden_size) 
+        if "hidden_score" in modes:
+            aggregated_tokens["hidden_score"] = torch.stack(token_svd_score) # (batch_size,) 
         
         # Put everything on CPU
         # ---------------------------------------
