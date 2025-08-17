@@ -14,26 +14,85 @@ from sklearn.metrics import (
 )
 import seaborn as sns
 import matplotlib.pyplot as plt
-from typing import Tuple
+from typing import Tuple, Optional, Literal
+
+
+def youden_threshold(
+    fpr: np.ndarray,
+    tpr: np.ndarray,
+    thresholds: np.ndarray,
+) -> Optional[float]:
+    """
+    Return the threshold that maximizes Youden's J = TPR - FPR,
+    computed from a precomputed ROC (fpr, tpr, thresholds).
+
+    Skips the sentinel +inf threshold that sklearn puts first.
+
+    Returns
+    -------
+    float or None
+        Best finite threshold (Youden). Returns None if no finite
+        threshold is available (extremely rare).
+    """
+    finite = np.isfinite(thresholds)
+    if not finite.any():
+        return None
+    j = tpr[finite] - fpr[finite]
+    idx = int(np.argmax(j))
+    return float(thresholds[finite][idx])
+
+
+
+
+def threshold_at_target_tpr(
+    fpr: np.ndarray,
+    tpr: np.ndarray,
+    thresholds: np.ndarray,
+    target_tpr: float = 0.95,
+) -> Optional[float]:
+    """
+    Return the threshold whose TPR is closest to `target_tpr`,
+    using a precomputed ROC (fpr, tpr, thresholds).
+
+    Skips the sentinel +inf threshold that sklearn puts first.
+
+    Returns
+    -------
+    float or None
+        Threshold at target TPR (closest). Returns None if no finite
+        threshold is available.
+    """
+    target_tpr = float(np.clip(target_tpr, 0.0, 1.0))
+    finite = np.isfinite(thresholds)
+    if not finite.any():
+        return None
+    fpr_f, tpr_f, thr_f = fpr[finite], tpr[finite], thresholds[finite]
+    idx = int(np.argmin(np.abs(tpr_f - target_tpr)))
+    return float(thr_f[idx])
+
+
 
 
 def compute_metrics(
     scores_id: np.ndarray,
     scores_ood: np.ndarray,
     plot: bool = False,
-    save_path: str = None,
+    save_path: str | None = None,
+    threshold_strategy: Literal["youden", "target_tpr"] = "youden",
+    target_tpr: float = 0.95,
 ) -> Tuple[float, float, float, np.ndarray, np.ndarray, np.ndarray, float]:
     """
-    Compute the Area Under the ROC Curve (auROC), FPR95, and AUC-PR for OOD 
-    detection using scores.
+    Compute auROC, FPR@TPR=95% (FPR95), AUC-PR, and select a decision threshold
+    according to a chosen strategy, for OOD  detection using OOD/ID scores.
 
     This function:
-    - Concatenates the scores from ID and OOD samples,
-    - Assigns binary labels (0 for ID, 1 for OOD)
+    - Concatenates ID (label 0) and OOD (label 1) scores,
     - Computes auROC, FPR95, and AUC-PR and optionally plots the ROC curve 
-    - Determines the optimal threshold using Youden's J statistic. 
+    - Determines the optimal threshold using either:
+        - 'youden'     : maximizes Youden's J = TPR - FPR (finite thresholds only)
+        - 'target_tpr' : picks the threshold whose TPR is closest to `target_tpr`
 
-     Metrics:
+    Metrics:
     --------
     auROC (Area Under the ROC Curve): 
         A global measure of the model's ability to distinguish between two classes (ID vs OOD)
@@ -56,6 +115,11 @@ def compute_metrics(
         If True, plot the ROC curve.
     save_path : str, optional (default=None)
         If provided, save the ROC curve image to this path (e.g. "plot.png").
+    threshold_strategy : {"youden", "target_tpr"}, default "youden"
+        Strategy used to select the operating threshold.
+    target_tpr : float, default 0.95
+        Target TPR used when `threshold_strategy="target_tpr"`.
+
 
     Returns
     -------
@@ -70,20 +134,27 @@ def compute_metrics(
     tpr : np.ndarray
         True positive rates at different thresholds.
     thresholds : np.ndarray
-        Thresholds used to compute FPR and TPR.
-    youden_threshold : float
-        Optimal threshold according to Youden's J statistic.
-        Samples with score <= threshold are classified as ID,
+        Thresholds corresponding to (fpr, tpr). Note: first element may be +inf.
+    selected_threshold : float
+        The decision threshold chosen per `threshold_strategy`.
+         Samples with score <= threshold are classified as ID,
         samples with score > threshold are classified as OOD.
 
     Notes
     -----
-    Youden's J statistic looks for the optimal point on the ROC curve, where :
-    - The rate of true positives is as high as possible
-    - The false positive rate is as low as possible
-    This is the threshold that best separates the classes without  
-    compromising either side too much.
+    - Youden's J threshold:
+      Finds the ROC point that maximizes J = TPR - FPR, i.e., pushes TPR up while keeping FPR down.
+      This yields a single operating point that balances sensitivity and specificity.
+    
+    - Target-TPR threshold:
+      Picks the threshold whose TPR is closest to a desired target (e.g., 95%).
+      Common in OOD evaluations where high detection rate (recall for OOD) is required;
+      it then reports the corresponding FPR at that operating point.
+    
+    - sklearn's roc_curve includes a sentinel +inf as the first threshold;
+      threshold selection here ignores non-finite thresholds and falls back safely if needed.
     """
+
     # Concatenate scores and create labels
     all_scores = np.concatenate([scores_id, scores_ood])
     all_labels = np.concatenate([
@@ -91,30 +162,55 @@ def compute_metrics(
         np.ones_like(scores_ood)   # 1 for OOD
     ])
 
+    # Some scoring pipelines can produce NaN/Inf => unpredictable roc_curve/roc_auc_score
+    # Keeps only finite scores and drops the corresponding labels
+    m = np.isfinite(all_scores)
+    if not np.all(m): 
+        all_scores = all_scores[m]
+        all_labels = all_labels[m]
+
     # Compute ROC curve and auROC
-    fpr, tpr, thresholds = roc_curve(all_labels, all_scores)
+    fpr, tpr, thresholds = roc_curve(all_labels, all_scores, pos_label=1)
     auroc = roc_auc_score(all_labels, all_scores)
 
-    # Compute Youden's J statistic
-    j_scores = tpr - fpr
-    best_index = np.argmax(j_scores)
-    youden_threshold = thresholds[best_index]
-
-    # Compute FPR95
-    # Find the threshold where TPR is closest to 0.95
-    tpr_95_idx = np.argmin(np.abs(tpr - 0.95))
+    # Compute FPR95: find the threshold where TPR is closest to 0.95
+    tpr_95_idx = int(np.argmin(np.abs(tpr - 0.95)))
     fpr95 = fpr[tpr_95_idx]
 
     # Compute Precision-Recall curve and AUC-PR
-    precision, recall, _ = precision_recall_curve(all_labels, all_scores)
-    auc_pr = average_precision_score(all_labels, all_scores)
+    precision, recall, _ = precision_recall_curve(all_labels, all_scores, pos_label=1) # OOD as positive class (1)
+    auc_pr = average_precision_score(all_labels, all_scores, pos_label=1)
+
+    ''' # Debug
+    print(
+    "ID min/med/max:", np.min(scores_id), np.median(scores_id), np.max(scores_id),
+    "| OOD min/med/max:", np.min(scores_ood), np.median(scores_ood), np.max(scores_ood)
+    )
+    print("unique score count (all):", np.unique(np.concatenate([scores_id, scores_ood])).size)
+    '''
+
+    # Select threshold per strategy (robust to +inf)
+    selected_threshold: Optional[float] = None
+    if threshold_strategy == "youden":
+        selected_threshold = youden_threshold(fpr, tpr, thresholds)
+    elif threshold_strategy == "target_tpr":
+        selected_threshold = threshold_at_target_tpr(
+            fpr, tpr, thresholds, target_tpr=target_tpr
+        )
+    else:
+        raise ValueError("threshold_strategy must be 'youden' or 'target_tpr'.")
+
+    # Fallback if selection failed (degenerate ROC): picks the median of the finite scores
+    if selected_threshold is None or not np.isfinite(selected_threshold):
+        finite_scores = all_scores[np.isfinite(all_scores)]
+        selected_threshold = float(np.median(finite_scores)) if finite_scores.size else 0.0
 
     # Display results
     if plot:
         print(f"auROC: {auroc:.4f}")
         print(f"FPR95: {fpr95:.4f}")
         print(f"AUC-PR: {auc_pr:.4f}")
-        print(f"Optimal Threshold (Youden's J statistic): {youden_threshold:.4f}")
+        print(f"Optimal Threshold ({threshold_strategy}): {selected_threshold:.4f}")
 
     # Optionally plot the ROC curve
     if plot or save_path:
@@ -132,7 +228,7 @@ def compute_metrics(
         else:
             plt.close()
 
-    return auroc, fpr95, auc_pr, fpr, tpr, thresholds, youden_threshold
+    return auroc, fpr95, auc_pr, fpr, tpr, thresholds, float(selected_threshold)
 
 
 
@@ -179,11 +275,11 @@ def compute_confusion_matrix_and_metrics(
     # Compute accuracy
     accuracy = accuracy_score(y_true, y_pred)
     # Compute f1-score
-    f1 = f1_score(y_true, y_pred)
+    f1 = f1_score(y_true, y_pred, zero_division=0)
     # Compute precision
-    precision = precision_score(y_true, y_pred)
+    precision = precision_score(y_true, y_pred, zero_division=0)
     # Compute recall 
-    recall = recall_score(y_true, y_pred)
+    recall = recall_score(y_true, y_pred, zero_division=0)
 
     if normalize:
         cm = cm.astype(np.float32) / cm.sum(axis=1, keepdims=True)

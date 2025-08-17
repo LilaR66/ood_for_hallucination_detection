@@ -76,6 +76,7 @@ def plot_score_distributions_kde(
     plt.show()
 
 
+
 def plot_score_distributions_hist(
     scores_id: np.ndarray,
     scores_ood: np.ndarray,
@@ -142,15 +143,15 @@ def plot_score_distributions_hist(
 
 
 def plot_dim_reduction_3d_embeddings(
-    id_test_embeddings,
-    od_test_embeddings,
-    labels_id=None,
-    labels_ood=None,
-    pca_config=None,
-    tsne_config=None,
-    umap_config=None,
-    marker_size=3,
-    random_state=42,
+    id_test_embeddings: np.ndarray,
+    od_test_embeddings: np.ndarray,
+    labels_id: np.ndarray = None,
+    labels_ood: np.ndarray = None,
+    pca_config: dict = None,
+    tsne_config: dict = None,
+    umap_config: dict= None,
+    marker_size: int = 3,
+    random_state: int = 42,
 ):
     """
     Visualize embeddings in 3D using PCA, t-SNE, and/or UMAP, with optional 
@@ -178,9 +179,9 @@ def plot_dim_reduction_3d_embeddings(
 
     Parameters
     ----------
-    id_test_embeddings : torch.Tensor
+    id_test_embeddings : np.ndarray
         Embeddings of ID test samples, Shape (N_id_samples, hidden_size)
-    od_test_embeddings : torch.Tensor
+    od_test_embeddings : np.ndarray
         Embeddings of OOD test samples, Shape (N_ood_samples, hidden_size)
     labels_id : np.ndarray or None, optional
         Array of labels for ID test samples, same length as id_test_embeddings.
@@ -241,19 +242,21 @@ def plot_dim_reduction_3d_embeddings(
     # ==============================
     # Prepare embeddings and labels 
     # ==============================
-    # Convert embeddings to numpy arrays
-    id_emb_np = id_test_embeddings.cpu().numpy()
-    od_emb_np = od_test_embeddings.cpu().numpy()
+    # Check if embeddings have at least 3 features to apply PCA
+    for name, arr in [("id_test_embeddings", id_test_embeddings),
+                  ("od_test_embeddings", od_test_embeddings)]:
+        if arr.ndim != 2 or arr.shape[1] < 3:
+            raise ValueError(f"{name} must be 2D with at least 3 features. Got shape {arr.shape}.")
 
     # Labels and concatenation
     if labels_id is not None and labels_ood is not None:
-        all_embeddings = np.concatenate([id_emb_np, od_emb_np], axis=0)
+        all_embeddings = np.concatenate([id_test_embeddings, od_test_embeddings], axis=0)
         all_labels = np.concatenate([labels_id, labels_ood])
     else:
-        all_embeddings = np.concatenate([id_emb_np, od_emb_np], axis=0)
+        all_embeddings = np.concatenate([id_test_embeddings, od_test_embeddings], axis=0)
         all_labels = np.concatenate([
-            np.zeros(len(id_emb_np), dtype=int),  # label 0 = ID
-            np.ones(len(od_emb_np), dtype=int)    # label 1 = OOD
+            np.zeros(len(id_test_embeddings), dtype=int),  # label 0 = ID
+            np.ones(len(od_test_embeddings), dtype=int)    # label 1 = OOD
         ])
 
     # ==============================

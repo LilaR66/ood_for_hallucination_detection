@@ -751,12 +751,12 @@ def retrieve_test_answers_descriptor_pipeline(
 # ====================================
 # Global variables  
 # ====================================
-SEED = 777 #42, 44, 777, 123, 2025, 42
+SEED = 44 #42, 44, 777, 123, 2025, 42
 BATCH_SIZE = 16
 MODEL_NAME = "meta-llama/Llama-2-7b-chat-hf"
-OUTPUT_DIR = f"../results/raw/small_dataset_correct_split_allConfig_{SEED}/"
-PLOT_DIR   = f"../results/figures/small_dataset_correct_split_allConfig_{SEED}/"
-ACTIVATION_SOURCE = "promptGeneration" # can be 'generation', 'prompt', 'promptGeneration'
+OUTPUT_DIR = f"../results/raw/small_dataset_allConfig_seed{SEED}/"
+PLOT_DIR   = f"../results/figures/small_dataset_allConfig_seed{SEED}/"
+ACTIVATION_SOURCE = "generation" # can be 'generation', 'prompt', 'promptGeneration'
 START_OFFSET = 0 #40
 END_OFFSET = 0   #-4
 
@@ -783,8 +783,8 @@ def main() -> None:
         run_filter_generated_answers_by_similarity_pipeline(
             model_name=MODEL_NAME,
             seed=SEED,
-            output_path=OUTPUT_DIR + f"id_fit_results_answers_BIG_correct_split",
-            save_dataset_path="../data/datasets/id_fit_correct_dataset_BIG_correct_split.pkl",
+            output_path=OUTPUT_DIR + f"id_fit_results_answers_small_seed{SEED}",
+            save_dataset_path=f"../data/datasets/id_fit_correct_dataset_small_seed{SEED}.pkl",
             shuffle=True,
             select_slice=(0, 10_000), # None
             batch_size=BATCH_SIZE,

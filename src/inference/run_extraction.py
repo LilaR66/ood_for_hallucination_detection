@@ -64,7 +64,7 @@ from src.inference.hooks import (
     register_attention_hook,
     verify_call_counters,
     )
-from src.inference.scores import (
+from src.inference.compute_descriptors import (
     extract_token_activations,
     compute_attn_eig_prod,
     compute_perplexity,
@@ -672,7 +672,7 @@ def run_prompt_descriptor_extraction(
             "context": [s['context'] for s in batch],
             "question": [s['question'] for s in batch],
             "gt_answers": [s['answers'] for s in batch],
-            "scores": {**save_layers_descriptors}
+            "descriptors": {**save_layers_descriptors}
         }
 
         from src.data_reader.pickle_io import save_batch_pickle
@@ -1125,7 +1125,7 @@ def run_prompt_and_generation_descriptor_extraction(
             "question": [s['question'] for s in batch],
             "gt_answers": [s['answers'] for s in batch],
             "gen_answers": gen_answers,
-            "scores":  {**save_layers_descriptors},
+            "descriptors":  {**save_layers_descriptors},
         }
 
         from src.data_reader.pickle_io import save_batch_pickle
