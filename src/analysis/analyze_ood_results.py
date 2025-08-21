@@ -26,6 +26,11 @@ What it contains
     metrics (accuracy / F1 / precision / recall). Also performs **linear probing**
     (logistic regression) on the descriptors themselves.
 
+- `grid_search_best_config(...)`:
+    consolidates multiple result tables produced by
+    (typically one per random seed/run) and
+    summarizes performance **per unique configuration**.
+
 Expected input structure
 ------------------------
 Each split dict (e.g., `id_fit_data`, `id_test_data`, `od_test_data`) must include:
@@ -59,7 +64,7 @@ Conventions
 
 from __future__ import annotations
 
-from typing import Dict, Optional, Any, List, Literal
+from typing import Dict, Optional, Any, List, Literal, Union
 import numpy as np
 import torch
 import pandas as pd
@@ -70,6 +75,7 @@ from src.analysis.evaluation import compute_metrics, compute_confusion_matrix_an
 from src.ood_methods.logistic_regression import train_logistic_regression_on_descriptors
 from src.ood_methods.ood_main import compute_ood_scores
 from src.utils.debug import _describe_array
+
  
 
 def discover_config_space(data_dict: Dict[str, Any]) -> Dict[str, Any]:
@@ -582,3 +588,213 @@ def grid_search_best_config(
 
 
     return df
+
+
+
+
+def average_ood_grid_results(
+    paths: List[str],
+    round_digits: int = 4,
+    sort_by: Optional[Union[str, List[str]]] = None,
+    ascending: Optional[Union[bool, List[bool]]] = None,
+    save_path: Optional[str] = None,
+    readable_writing: bool = False, 
+) -> pd.DataFrame:
+    """
+    Read multiple grid_search_best_config result files (CSV/XLSX) and compute
+    the mean/std per unique configuration:
+    (layer, group, aggregation, method, method_params)
+
+    Parameters
+    ----------
+    paths : List[str]
+        List of CSV/XLSX files produced by `grid_search_best_config`.
+    round_digits : int, default 4
+        Round aggregated numeric results to this number of decimals.
+    sort_by : str or List[str], optional
+        Column(s) to sort by in the final table. If None, defaults to
+        ["auroc_mean", "auprc_mean"] when present.
+    ascending : bool or List[bool], optional
+        Sort order per `sort_by`. If None and `sort_by` is given, defaults to
+        all False (descending). If a single bool is given, it is broadcast.
+    save_path : Optional[str], default None
+        If provided, save the aggregated table. Extension decides the format:
+        - ".csv"              -> DataFrame.to_csv
+        - ".xlsx" or ".xls"   -> DataFrame.to_excel (requires openpyxl)
+    readable_writing : bool, default False
+        If True, convert metric columns to human-readable strings:
+        percentage with two decimals: "XX.XX ± YY.YY". 
+        With XX.XX = mean, YY.YY = std. Drops *_std columns.
+
+    Returns
+    -------
+    pd.DataFrame
+        Aggregated results with one row per unique config:
+        (layer, group, aggregation, method, method_params), plus averaged metrics
+        and a `n_runs` column indicating how many files contributed.
+    """
+    if not paths:
+        raise ValueError("`paths` must contain at least one file path.")
+
+    # Define the columns that uniquely identify a configuration group in the data
+    group_cols = ["layer", "group", "aggregation", "method", "method_params"]
+
+    # ------------------------------
+    # Load all input files
+    # ------------------------------
+    # Initialize an empty list to store DataFrames read from each file
+    frames = []
+    # Loop through each file path provided in 'paths'
+    for p in paths:
+        ext = Path(p).suffix.lower() # Extract the file extension to determine file type
+        if ext == ".csv":
+            df = pd.read_csv(p)
+        elif ext in (".xlsx", ".xls"):
+            df = pd.read_excel(p)
+        else:
+            raise ValueError(f"Unsupported extension for '{p}'. Use .csv, .xlsx or .xls.")
+
+        # Append the DataFrame loaded from this file into the list
+        frames.append(df)
+
+    # ------------------------------
+    # Concatenate & schema checks
+    # ------------------------------
+    # Concatenate all loaded DataFrames into a single DataFrame, reset the index
+    df_all = pd.concat(frames, ignore_index=True)
+
+    # Check if all grouping columns exist in the combined DataFrame
+    missing = [c for c in group_cols if c not in df_all.columns]
+    if missing:
+        raise KeyError(f"Missing required columns in input files: {missing}")
+
+    # Make params groupable (string form assumed consistent across runs)
+    df_all["method_params"] = df_all["method_params"].astype(str)
+
+    # ------------------------------
+    # Identify metric columns
+    # ------------------------------
+    # Metrics = all numeric columns except the group keys (if any were numeric)
+    numeric_cols = df_all.select_dtypes(include=[np.number]).columns.tolist()
+    metric_cols = [c for c in numeric_cols if c not in group_cols]
+    if not metric_cols:
+        raise ValueError("No numeric metric columns found to aggregate.")
+    
+    # ------------------------------
+    # Aggregate per configuration
+    # ------------------------------
+    # Group the DataFrame by the grouping columns; keep NaN as a group
+    grouped = df_all.groupby(group_cols, dropna=False)
+    # Aggregate (mean and std) numeric metrics per group, reset index for result
+    agg_df = grouped[metric_cols].agg(['mean', 'std']).reset_index()
+
+    # Flatten the MultiIndex columns from aggregation into simple string column names
+    agg_df.columns = [
+        (f"{col}_{stat}" if stat else col)
+        for col, stat in (
+            [(c, '') for c in group_cols] +  # group columns without suffix
+            [(m, s) for m in metric_cols for s in ('mean', 'std')]  # metric + aggregation suffix
+        )
+    ]
+
+    # Count how many rows (runs) contributed to each group, rename to 'n_runs'
+    df_count = grouped.size().rename("n_runs").reset_index()
+    # Merge aggregated metrics DataFrame and count DataFrame on the group keys
+    out = pd.merge(agg_df, df_count, on=group_cols, how="left")
+
+    # ------------------------------
+    # Post-processing of metrics
+    # ------------------------------
+    # std can be NaN when n_runs == 1 -> set to 0.0 for convenience
+    for m in metric_cols:
+        std_col = f"{m}_std"
+        if std_col in out.columns:
+            out[std_col] = out[std_col].fillna(0.0)
+
+    # Rounding (only metric mean/std; not n_runs)
+    if round_digits is not None:
+        to_round = [f"{m}_mean" for m in metric_cols] + [f"{m}_std" for m in metric_cols]
+        to_round = [c for c in to_round if c in out.columns]  # safely select existing columns
+        out[to_round] = out[to_round].round(round_digits)
+
+    # ------------------------------
+    # Sorting of the final table
+    # ------------------------------
+    if sort_by is None:
+        sort_cols = [c for c in ("auroc_mean", "auprc_mean") if c in out.columns]
+        sort_ord = [False] * len(sort_cols)
+    else:
+        sort_cols = list(sort_by) if isinstance(sort_by, (list, tuple)) else [sort_by]
+        if ascending is None:
+            sort_ord = [False] * len(sort_cols)
+        elif isinstance(ascending, bool):
+            sort_ord = [ascending] * len(sort_cols)
+        else:
+            if len(ascending) != len(sort_cols):
+                raise ValueError("`ascending` must be a bool or a list with the same length as `sort_by`.")
+            sort_ord = list(ascending)
+        # Keep only existing columns
+        present = [c for c in sort_cols if c in out.columns]
+        if len(present) < len(sort_cols):
+            sort_ord = [ord for c, ord in zip(sort_cols, sort_ord) if c in present]
+            sort_cols = present
+
+   
+    # Sort output descending by these metric columns and reset index afterward
+    if sort_cols:
+        out = out.sort_values(sort_cols, ascending=[False] * len(sort_cols)).reset_index(drop=True)
+
+
+    # ------------------------------
+    # Human-readable formatting
+    # ------------------------------
+    if readable_writing:
+        # Format: percentage with two decimals, combine mean & std into one column named after the metric.
+        # Example: "85.37 ± 1.24"
+        formatted_cols = []
+        for m in metric_cols:
+            mean_col = f"{m}_mean"
+            std_col = f"{m}_std"
+            if mean_col in out.columns:
+                mean_pct = (out[mean_col] * 100).astype(float)
+                if std_col in out.columns:
+                    std_pct = (out[std_col] * 100).astype(float)
+                    out[m] = mean_pct.map(lambda x: f"{x:.2f}") + " ± " + std_pct.map(lambda x: f"{x:.2f}")
+                    # Drop std/mean columns after merging
+                    out = out.drop(columns=[mean_col, std_col])
+                else:
+                    out[m] = mean_pct.map(lambda x: f"{x:.2f}")
+                    out = out.drop(columns=[mean_col])
+                formatted_cols.append(m)
+
+        # Reorder columns: group keys, formatted metrics, then the rest (e.g., n_runs)
+        prefix = group_cols
+        suffix = [c for c in out.columns if c not in (group_cols + formatted_cols)]
+        out = out[prefix + formatted_cols + suffix]
+
+
+    # ------------------------------
+    # Save aggregated results if requests
+    # ------------------------------
+    # If a save_path is provided, save the aggregated DataFrame to the specified file
+    if save_path is not None:
+        path = Path(save_path)
+        # Create parent directories if they don't exist already
+        if path.parent:
+            path.parent.mkdir(parents=True, exist_ok=True)
+        # Determine file extension of save_path for deciding output format
+        ext = path.suffix.lower()
+        if ext == ".csv":
+            out.to_csv(path, index=False)
+        elif ext in (".xlsx", ".xls"):
+            try:
+                out.to_excel(path, index=False)
+            except Exception as e:
+                # Inform user if openpyxl is missing or Excel saving failed
+                raise RuntimeError(
+                    "Writing Excel requires `openpyxl`. Install it or choose a .csv save_path."
+                ) from e
+        else:
+            raise ValueError(f"Unsupported extension '{ext}'. Use '.csv', '.xlsx', or '.xls'.")
+
+    return out

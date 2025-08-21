@@ -48,6 +48,13 @@ def train_logistic_regression_on_descriptors(
         np.ones(od_test_descriptors.shape[0])    # 1 = OOD
     ])
 
+    X = np.asarray(X, dtype=np.float64)
+    y = np.asarray(y)
+
+    # Filter infinite lines
+    mask = np.isfinite(X).all(axis=1)
+    X, y = X[mask], y[mask]
+
     # 2. Stratified train/test split to preserve class proportions
     indices = np.arange(len(X))
     X_train, X_test, y_train, y_test, idx_train, idx_test = train_test_split(
