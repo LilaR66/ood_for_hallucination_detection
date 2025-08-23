@@ -751,12 +751,12 @@ def retrieve_test_answers_descriptor_pipeline(
 # ====================================
 # Global variables  
 # ====================================
-SEED = 44 #42, 44, 777, 123, 2025, 42
+SEED = 2025 #42, 44, 777, 123, 2025,
 BATCH_SIZE = 16
 MODEL_NAME = "meta-llama/Llama-2-7b-chat-hf"
 OUTPUT_DIR = f"../results/raw/small_dataset_allConfig_seed{SEED}/"
 PLOT_DIR   = f"../results/figures/small_dataset_allConfig_seed{SEED}/"
-ACTIVATION_SOURCE = "generation" # can be 'generation', 'prompt', 'promptGeneration'
+ACTIVATION_SOURCE = "promptGeneration" # can be 'generation', 'prompt', 'promptGeneration'
 START_OFFSET = 0 #40
 END_OFFSET = 0   #-4
 
