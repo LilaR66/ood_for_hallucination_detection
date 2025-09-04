@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="submissions/head-llama.png" alt="OOD for Hallucination Detection" width="200" style="transform: rotate(0deg);"/>
+</p>
+
 # Post-Hoc Out-of-Distribution (OOD) Detection for Hallucination Detection in Large Language Models
 
 This repository was developed during a 5-month internship (April–September 2025) at [IRT Saint Exupéry](https://www.irt-saintexupery.com/fr/) (3 Rue Tarfaya, 31400 Toulouse, France). This internship was part of the [MVA Master’s program](https://www.master-mva.com/) (Mathematics, Vision, Learning)  at [ENS Paris-Saclay](https://ens-paris-saclay.fr/) (École Normale Supérieure Paris-Saclay) for the academic year 2024–2025.
@@ -8,22 +12,7 @@ A detailed internship report (formatted similarly to a research paper) provides 
 
 ## Abstract 
 
-Hallucinations in large language models (LLMs), defined as fluent yet factually incorrect or unsupported
-outputs, remain a major concern for the safe and certifiable deployment of AI in critical
-domains. We frame hallucination detection as an out-of-distribution (OOD) detection problem, that
-is, identifying inputs that deviate from the training distribution. First, we conducted a comprehensive
-survey of the state-of-the-art methods in OOD and hallucination detection. Then, we leverage
-post-hoc distance-based OOD detectors on internal model representations, as well as logit-based uncertainty
-metrics as a baseline. Specifically, we extract hidden states, attention maps, and logit-based
-uncertainty signals from LLaMA-2-7B Chat when evaluated on SQuAD 2.0, distinguishing answerable
-(in-distribution) from unanswerable (OOD, hallucination-prone) questions. We evaluate several
-descriptors with OOD scoring techniques (DeepKNN, Mahalanobis distance, cosine similarity) as
-well as linear probes, and systematically compare prompt-only versus response-based representations.
-Our results show that unsupervised OOD signals achieve modest discrimination (AUROC $\approx 0.6$),
-with prompt-only embedding-based OOD detectors underperforming generation logit-based baselines.
-Supervised probes substantially improve linear separability (up to 0.80 accuracy on embedding-based
-descriptors) but at the cost of generalization. Layerwise trajectory analyses are explored and yield
-little additional benefit.
+Hallucinations in large language models (LLMs), defined as fluent yet factually incorrect or unsupported outputs, remain a major concern for the safe and certifiable deployment of AI in critical domains. We frame hallucination detection as an out-of-distribution (OOD) detection problem, that is, identifying inputs that deviate from the training distribution. First, we conducted a comprehensive survey of the state-of-the-art methods in OOD and hallucination detection. Then, we leverage post-hoc distance-based OOD detectors on internal model representations, as well as logit-based uncertainty metrics as a baseline. Specifically, we extract hidden states, attention maps, and logit-based uncertainty signals from LLaMA-2-7B Chat when evaluated on SQuAD 2.0, distinguishing answerable (in-distribution) from unanswerable (OOD, hallucination-prone) questions. We evaluate several descriptors with OOD scoring techniques (DeepKNN, Mahalanobis distance, cosine similarity) as well as linear probes, and systematically compare prompt-only versus response-based representations. Our results show that unsupervised OOD signals achieve modest discrimination (AUROC $\approx 0.6$), with prompt-only embedding-based OOD detectors underperforming generation logit-based baselines. Supervised probes substantially improve linear separability (up to 0.80 accuracy on embedding-based descriptors) but at the cost of generalization. Layerwise trajectory analyses are explored and yield little additional benefit.
 
 ## Setup 
 
@@ -71,7 +60,7 @@ The first run of `scripts/main.py` or `notebooks/part1_extract_descriptors.ipynb
 
 ## Project Structure Overview
 
-```bash
+```
 ├── LICENSE            <- Open-source license
 ├── Makefile           <- Makefile with commands such as `make create_env`, `make activate_env`,
 │                         or `make make_public`
@@ -166,3 +155,7 @@ python scripts/main.py
 - The notebook `notebooks/part2_analyse_results.ipynb`
 
 
+
+<p align="right">
+  <img src="submissions/full-llama.png" alt="OOD for Hallucination Detection" width="250" />
+</p>
