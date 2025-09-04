@@ -759,7 +759,8 @@ def average_ood_grid_results(
                 mean_pct = (out[mean_col] * 100).astype(float)
                 if std_col in out.columns:
                     std_pct = (out[std_col] * 100).astype(float)
-                    out[m] = mean_pct.map(lambda x: f"{x:.2f}") + " ± " + std_pct.map(lambda x: f"{x:.2f}")
+                    #out[m] = mean_pct.map(lambda x: f"{x:.2f}") + " ± " + std_pct.map(lambda x: f"{x:.2f}")
+                    out[m] = mean_pct.map(lambda x: f"{x:.2f}") + "(" + std_pct.map(lambda x: f"{x:.2f}") + ")"
                     # Drop std/mean columns after merging
                     out = out.drop(columns=[mean_col, std_col])
                 else:

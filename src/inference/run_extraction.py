@@ -47,7 +47,7 @@ from transformers import PreTrainedTokenizer, PreTrainedModel
 import torch
 from datasets import  Dataset
 from tqdm import tqdm
-from typing import Dict, List, Any, Callable, Union, Literal
+from typing import Dict, List, Any, Callable, Union, Literal, Optional
 import time
 
 from src.answer_similarity.similarity_metrics import rouge_l_simScore, sentence_bert_simScore
@@ -80,16 +80,15 @@ def analyze_single_generation(
     tokenizer: PreTrainedTokenizer,
     dataset: Dataset,
     sample_idx: int = 0,
+    layers: List[int] = [-1],
     build_prompt_fn: Callable[[str, str], str] = None,
-    register_forward_activation_hook_fn: Callable = None,
-    layer_idx: int = -1,
-    extract_token_activations_fn: Callable = None,
 ) -> Dict[str, Any]:
     """
     Analyze a single sample from the dataset through the full inference pipeline:
     - Build prompt
     - Run forward pass and capture hidden states
-    - Extract token-level activations from a specific layer
+    - Extract token-level hidden states and attention maps from a specific layer 
+        with custom hooks
     - Generate an answer
     - Decode output and compute similarity scores with ground-truth
 
@@ -107,139 +106,181 @@ def analyze_single_generation(
         Index of the sample to analyze.
     build_prompt_fn : Callable
         Function to build a prompt from context and question.
-    register_forward_activation_hook_fn : Callable
-        Function that registers a forward hook on the model during a forward pass. 
-    layer_idx : int
-        Index of the transformer layer to extract activations from (default -1: last layer).
-    extract_token_activations_fn : Callable
-        Function that selects and aggregates token-level activations.
+    layers : int
+        List of indices of the transformer layers to extract hidden states and 
+        attention maps from (default: [-1] for last layer).
 
-    Returns
-    -------
-    Dict[str, Any]
-        Dictionary with:
-        - prompt, generated and ground-truth answers
-        - similarity scores (ROUGE-L, Sentence-BERT)
-        - whether generation is deemed correct
-        - activations and tensor shapes
-        - timing breakdown
+    Notes
+    -----
+    - Expects dataset fields: "context", "question", "answers" (with key "text").
+    - Restores original attention forwards after generation to avoid side effects.
     """
+    # ---------------------------
+    # Helpers for pretty printing
+    # ---------------------------
+    def hr(ch: str = "─", n: int = 80) -> None:
+        print(ch * n)
+
+    def title(s: str) -> None:
+        hr("═"); print(s); hr("═")
+
+    def section(s: str) -> None:
+        print(); hr(); print(s); hr()
+
+    def shape_of(x) -> str:
+        shp = getattr(x, "shape", None)
+        return str(tuple(shp)) if shp is not None else "N/A"
+    
+    # ---------------------------
+    # Setup
+    # ---------------------------
+    times: Dict[str, float] = {}
+    def tic(k: str): times[k] = time.time()
+    def toc(k: str): times[k] = time.time() - times[k]
+
     sample = dataset[sample_idx]
+    context = sample["context"]
+    question = sample["question"]
+    answer = sample["answers"]["text"]
 
-    print("========= Analyze one generation  =========")
-    times = {}
-
-    # ==============================
-    # 1. Prompt construction
-    # ==============================
-    t0 = time.time()
-    prompt = build_prompt_fn(sample["context"], sample["question"])
-    answer = sample["answers"]['text']
-    times['prompt_construction'] = time.time() - t0
-    print(f"----- Prompt construction: {times['prompt_construction']:.3f} sec")
-
-    # ==============================
-    # 2. Tokenization
-    # ==============================
-    t1 = time.time()
-    inputs = tokenizer(prompt, truncation=True, padding=True, return_tensors="pt").to(model.device)
-    times['tokenization'] = time.time() - t1
-    print(f"----- Tokenization: {times['tokenization']:.3f} sec")
-
-    t2 = time.time()
-    # ==============================
-    # Capture hidden states with forward hook
-    # ==============================
-    # Hook to collect the hidden states after the forward pass
-    captured_hidden = {}
-    handle, call_counter = register_forward_activation_hook_fn(model, captured_hidden, layer_idx=layer_idx)
-
-    # Pass inputs through the model. When the target layer is reached,
-    # the hook executes and saves its output in captured_hidden.
-    with torch.no_grad():
-        _ = model(**inputs, return_dict=True)
-    # Remove the hook to avoid memory leaks or duplicate logging
-    handle.remove() 
-
-    #print(f"Hook was called {call_counter['count']} times.")
-    if "activations" not in captured_hidden:
-        raise RuntimeError("Hook failed to capture activations.")
-
-    layer_output = captured_hidden["activations"]  # Shape: (batch_size, seq_len, hidden_size)
-
-    # ==============================
-    # Extract token activations from captured layer
-    # ==============================
-    times['layer_output'] = time.time() - t2
-    print(f"----- Token extraction with single forward pass: {times['layer_output']:.3f} sec")
-
-    # Token activations extraction
-    t3 = time.time()
-    selected_token_vecs = extract_token_activations_fn(
-        selected_layer=layer_output,
-        attention_mask=inputs["attention_mask"],
-        device=layer_output.device
+    title("Analyze single generation")
+    # --------------------------- 
+    # Replace LlamaAttention.forward on target layers by
+    # custom module to extract attention weights
+    # ---------------------------
+    for idx in layers:  
+        model.model.layers[idx].self_attn.forward = patched_LlamaAttention_forward.__get__(
+            model.model.layers[idx].self_attn,
+            model.model.layers[idx].self_attn.__class__
     )
-    times['token_activations'] = time.time() - t3
 
-    # ==============================
-    # Run generation
-    # ==============================
-    t4 = time.time()
-    outputs = generate(model, inputs, tokenizer)
-    outputs_ids = outputs.sequences
-    times['generation'] = time.time() - t4
-    print(f"----- Generation: {times['generation']:.3f} sec")
+    # ---------------------------
+    # Prompt
+    # ---------------------------
+    tic("prompt_construction")
+    prompt = build_prompt_fn(context, question)
+    toc("prompt_construction")
+    print(f"> Prompt construction: {times['prompt_construction']:.3f}s")
+    print(f"> Prompt preview:\n\n{prompt}\n\n")
 
-    # ==============================
-    # Decode generated output
-    # ==============================
-    t5 = time.time()
-    prompt_len = len(inputs["input_ids"][0])
-    generated_answer_ids = outputs_ids[0][prompt_len:]
-    generated_answer = tokenizer.decode(generated_answer_ids, skip_special_tokens=True).strip()
-    times['decoding'] = time.time() - t5
-    print(f"----- Decoding: {times['decoding']:.3f} sec")
+    # ---------------------------
+    # Tokenization
+    # ---------------------------
+    tic("tokenization")
+    inputs = tokenizer(prompt, truncation=True, padding=True, return_tensors="pt").to(model.device)
+    toc("tokenization")
+    prompt_ids = inputs["input_ids"]
+    prompt_len = prompt_ids.shape[1]
+    print(f"> Tokenization: {times['tokenization']:.3f}s")
+    print(f"> Prompt shape: {tuple(prompt_ids.shape)} (batch_size, prompt_len)")
 
-    # ==============================
-    # Compute similarity scores
-    # ==============================
-    t6 = time.time()
-    rouge_l_score = rouge_l_simScore(generated_answer, answer) 
+    # ---------------------------
+    # Capture hidden states and attention maps with forward hook
+    # ---------------------------
+    # Hook to collect the hidden states after the forward pass
+    activations_lists = [[] for _ in layers]  # one empty list per layer 
+    handle_act, call_counter_act = register_activation_hook(model, activations_lists, layers)
+    # Hook to collect attention maps after the forward pass
+    attentions_lists = [[] for _ in layers]  # one empty list per layer
+    handle_attn, call_counter_attn = register_attention_hook(model, attentions_lists, layers)
+
+    # ---------------------------
+    # Generation
+    # ---------------------------
+    tic("generation")
+    outputs = generate(model, inputs, tokenizer, max_new_tokens=50, k_beams=1)
+    gen_ids = outputs.sequences[:, prompt_len:]
+    toc("generation")
+    print(f"> Generation: {times['generation']:.3f}s")
+    print(f"> Generated output shape: {tuple(gen_ids.shape)} (batch_size, gen_len)")
+
+    # Remove the hooks to avoid memory leaks or duplicate logging
+    for h in handle_act:  h.remove()
+    for h in handle_attn: h.remove()
+
+    # ---------------------------
+    # Decode
+    # ---------------------------
+    tic("decoding")
+    generated_answer = tokenizer.decode(gen_ids[0], skip_special_tokens=True).strip()
+    toc("decoding")
+    print(f"> Decoding: {times['decoding']:.3f}s")
+
+    # ---------------------------
+    # Similarity scoring
+    # ---------------------------
+    tic("similarity_scoring")
+    rouge_l_score = rouge_l_simScore(generated_answer, answer)
     sbert_sim = sentence_bert_simScore(generated_answer, answer)
     is_correct = (rouge_l_score >= 0.5) or (sbert_sim >= 0.4)
-    times['similarity_scoring'] = time.time() - t6
-    print(f"----- Similarity scoring: {times['similarity_scoring']:.3f} sec")
+    toc("similarity_scoring")
+    print(f"> Scoring time: {times['similarity_scoring']:.3f}s")
 
-    # ==============================
-    # Display results
-    # ==============================
-    print("\n=== Prompt ===")
-    print(prompt)
-    print("\n=== Shapes ===")
-    print(f"Shape - number of tokens: {inputs['input_ids'].shape}")
-    print(f"Shape - selected_layer: {layer_output.shape}")
-    print("\n=== Generated Answer ===")
+    # ---------------------------
+    # Results
+    # ---------------------------
+    section("Results")
+    print("> Generated Answer:")
     print(generated_answer)
-    print("\n=== Ground-truth Answer ===")
+    print("\n> Ground-truth Answer:")
     print(answer)
-    print("\n=== Similarity Scores ===")
+    print("\n> Scores:")
     print(f"ROUGE-L F1: {rouge_l_score:.4f}")
     print(f"Sentence-BERT Cosine Similarity: {sbert_sim:.4f}")
     print(f"Is generated answer correct: {is_correct}")
 
-    return {
-        "prompt": prompt,
-        "generated_answer": generated_answer,
-        "ground_truth_answer": answer,
-        "rouge_l_score": rouge_l_score,
-        "sbert_score": sbert_sim,
-        "is_correct": is_correct,
-        "computation_times": times,
-        "input_shape": inputs['input_ids'].shape,
-        "layer_shape": layer_output.shape,
-        "token_activations": selected_token_vecs,
-    }
+    # ---------------------------
+    # Timing summary
+    # ---------------------------
+    section("Timing summary (seconds)")
+    for k in ("prompt_construction", "tokenization", "generation", "decoding", "similarity_scoring"):
+        if k in times:
+            print(f"> {k:>22}: {times[k]:.3f}")
+
+    # ---------------------------
+    # Hook prints
+    # ---------------------------
+    section("Hook capture summary\nHook retrieved: Hidden States in `activations_lists` and Attention Maps in `attentions_lists`")
+    print("> Transformer layers to retrive hidden states/attention maps from:", layers)
+    selected_layer = layers[-1]
+    try:
+        pos = layers.index(selected_layer)  # position within our lists
+    except ValueError:
+        pos = len(layers) - 1
+
+    print("\n> Hidden States (Activations) Summary for layer {selected_layer}:")
+    print(f"  - Number of analyzed layers [len(activations_lists)]: {len(activations_lists)}")
+    print(f"  - Number of hidden states for layer {selected_layer} [len(activations_lists[{selected_layer}])]: {len(activations_lists[pos])}")
+
+    if len(activations_lists[pos]) > 0:
+        h0 = activations_lists[pos][0]
+        print(f"  - First hidden state corresponds to the prompt:")
+        print(f"    activations_lists[{selected_layer}][0].shape = {shape_of(h0)}")
+        print("    Shape format: (batch_size, prompt_len, hidden_size)")
+
+    if len(activations_lists[pos]) > 1:
+        h1 = activations_lists[pos][1]
+        print(f"  - Subsequent hidden states correspond to the generation tokens:")
+        print(f"    activations_lists[{selected_layer}][i].shape for i in 1..gen_len-1 = {shape_of(h1)}")
+        print("    Shape format: (batch_size, 1, hidden_size)")
+        print("    NOTE: The model does not return the hidden state for the last generated token.")
+
+    print(f"\n> Attention Maps Summary for layer {selected_layer}:")
+    print(f"  - Number of analyzed layers [len(attentions_lists)]: {len(attentions_lists)}")
+    print(f"  - Number of attention maps [len(attentions_lists[{selected_layer}])]: {len(attentions_lists[pos])}")
+
+    if len(attentions_lists[pos]) > 0:
+        a0 = attentions_lists[pos][0]
+        print(f"  - First attention map corresponds to the prompt:")
+        print(f"    attentions_lists[{selected_layer}][0].shape = {shape_of(a0)}")
+        print("    Shape format: (batch_size, num_attention_heads, prompt_len, hidden_size)")
+
+    if len(attentions_lists[pos]) > 1:
+        a1 = attentions_lists[pos][1]
+        print(f"  - Subsequent attention maps correspond to the generation tokens:")
+        print(f"    attentions_lists[{selected_layer}][i].shape for i in 1..gen_len-1 = {shape_of(a1)}")
+        print("    Shape format: (batch_size, num_attention_heads, 1, hidden_size)")
+        print("    NOTE: The model does not return the attention map for the last generated token.")
 
 
 
