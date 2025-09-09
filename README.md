@@ -138,11 +138,12 @@ The first run of `scripts/main.py` or `notebooks/part1_extract_descriptors.ipynb
 
 ## Usage
 
-**Step 1:** Extract internal descriptors from the LLM (hidden states, attention maps, logits) to be used for hallucination detection methods, linear probing or anomaly detection.
+**Step 1:** Compute internal **descriptors** from the LLM (hidden states, attention maps, logits) on the selected layers. These will be used for OOD/anomaly detection, linear probing, and layer-wise trajectory volatility.
+
 
 - Run the notebook `notebooks/part1_extract_descriptors.ipynb`
 
-or
+**or**
 
 - Run the script:
 
@@ -150,7 +151,7 @@ or
 python scripts/main.py
 ```
 
-**Step 2:** Apply OOD, linear probe methods, and anomaly detection algorithms on extracted descriptors. Analyze and visualize the results using:
+**Step 2:** Apply OOD detection, anomaly detection, linear probes, and layer-wise trajectory volatility on the extracted descriptors to detect hallucinations. Analyze and visualize with:
 
 - The notebook `notebooks/part2_analyse_results.ipynb`
 
