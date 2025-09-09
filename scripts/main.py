@@ -3,12 +3,18 @@
 ============================================================
 Main pipeline for extracting and saving embeddings
 ============================================================
+This script mirrors the functionality of the notebook `part1_extracted_descriptors.ipynb`: 
+the notebook exposes intermediate steps for clarity, whereas the script automates the end-to-end 
+descriptor extraction.
 
 This script provides a modular pipeline for:
 - Seeding reproducibility
 - Loading a Llama model and tokenizer
 - Loading ID dataset and test datasets (that can have OOD and ID samples)
-- Extracting and saving token-level activations, attention maps and logits 
+- Extracting and saving token-level descriptors computed from 
+    - hidden states
+    - attention maps 
+    - and logits 
  for ID fit and ID/OOD test sets, for all selected layers.
 
 Usage:
@@ -72,7 +78,9 @@ def prepare_fit_dataset(
     select_slice: Optional[Tuple[int, int]]  = None,
 ) -> Dataset:
     """
-    Extract and save embeddings for the in-distribution (ID) training set.
+    Prepare the in-distribution (ID) *fit* dataset. 
+    It loads the canonical ID-fit dataset, optionally shuffles it with a fixed seed, 
+    and can return a contiguous slice [start, end) for faster experiments or ablations.
 
     Parameters
     ----------
@@ -86,7 +94,7 @@ def prepare_fit_dataset(
     Returns
     -------
     id_fit_dataset : Dataset
-        Hugging Face dataset containing ID fit data. 
+        Hugging Face dataset containing ID fit data (answerable questions that should not trigger hallucinations).
     """
     # Load ID dataset
     id_fit_dataset = load_id_fit_dataset()
@@ -113,7 +121,9 @@ def prepare_test_dataset(
     select_slice: Optional[Tuple[int, int]]  = None,
 ) -> Dataset:
     """
-    Extract and save embeddings for the in-distribution (ID) training set.
+    Prepare the in-distribution (ID) and out-of-distribution (OOD) *test* datasets. 
+    It loads the canonical test datasets, optionally shuffles them with a fixed seed, 
+    and can return a contiguous slice [start, end) for faster experiments or ablations.
 
     Parameters
     ----------
@@ -129,9 +139,9 @@ def prepare_test_dataset(
     Returns
     -------
     id_test_dataset : Dataset
-        Hugging Face dataset containing ID test data. 
+        Hugging Face dataset containing ID test data (answerable questions that should not trigger hallucinations).
     od_test_dataset : Dataset
-        Hugging Face dataset containing OOD test data. 
+        Hugging Face dataset containing OOD test data (unanswerable questions thay may trigger hallucinations).
     """
     # Load  ID test dataset
     id_test_dataset = load_id_test_dataset()
@@ -170,11 +180,10 @@ def run_filter_generated_answers_by_similarity_pipeline(
     build_prompt_fn: Callable = None,
 ) -> None:
     """
-    Generate model answers for a dataset, compare them to ground-truth, and filter to keep only correct responses.
-
-    This function runs batched inference to generate answers with a decoder-only language model,
-    compares generated responses to ground-truth answers using semantic similarity metrics,
-    and saves only the dataset entries where the generated answer is considered correct.
+    This function runs batched inference to generate answers for a dataset (typically ID *fit* dataset)
+    with a decoder-only language model, compares generated responses to ground-truth answers using 
+    semantic similarity metrics, and saves only the dataset entries where the generated answer is 
+    considered correct.
 
     Parameters
     ----------
@@ -261,7 +270,7 @@ def retrieve_fit_inputs_descriptor_pipeline(
     end_offset: int = 0
 ) -> None:
     """
-    Extract and save activations/attention/logits descriptors for the in-distribution (ID) training set.
+    Extract and save activations/attention/logits descriptors for the in-distribution (ID) fit dataset.
 
     Parameters
     ----------
@@ -374,7 +383,7 @@ def retrieve_test_inputs_descriptor_pipeline(
 ) -> None:
     """
     Extract and save activations/attention/logits descriptors for the in-distribution (ID)  
-    and out-of-distribution (OOD) test sets.
+    and out-of-distribution (OOD) test datasets.
 
     Parameters
     ----------
@@ -508,7 +517,7 @@ def retrieve_fit_answers_descriptor_pipeline(
 ) -> None:
     """
     Extract and save activations/attention/logits descriptors for the in-distribution (ID) 
-    training set of the generated answers.
+    fit dataset of the generated answers.
 
     Parameters
     ----------
@@ -627,7 +636,7 @@ def retrieve_test_answers_descriptor_pipeline(
 ) -> None:
     """
     Extract and save activations/attention/logits descriptors for the in-distribution (ID) 
-    and out-of-distribution (OOD) test sets of the generated answers.
+    and out-of-distribution (OOD) test datasets of the generated answers.
 
     Parameters
     ----------
@@ -755,21 +764,27 @@ def retrieve_test_answers_descriptor_pipeline(
 SEED = 2025 #42, 44, 777, 123, 2025,
 BATCH_SIZE = 16
 MODEL_NAME = "meta-llama/Llama-2-7b-chat-hf"
-OUTPUT_DIR = f"../results/raw/small_dataset_allConfig_seed{SEED}/"
-PLOT_DIR   = f"../results/figures/small_dataset_allConfig_seed{SEED}/"
+
+# Extract descriptors from: prompt, generated answer or both concatenated 
 ACTIVATION_SOURCE = "promptGeneration" # can be 'generation', 'prompt', 'promptGeneration'
+
+# Define layers to extract descriptors from
+LAYERS = list(range(1, 31, 2)) + [-1] # (List[int]) - Layers from witch retrieve the scores 
+
+# Optional offset to exclude a prompt span
 START_OFFSET = 0 #40
 END_OFFSET = 0   #-4
 
+# Define descriptors aggregations 
 HIDDEN_AGG = ["avg_emb", "last_emb", "max_emb", "first_gen_emb", "hidden_score", "feat_var_emb"]
 ATTN_AGG = ["attn_score"]
 LOGIT_AGG = ["perplexity_score", "logit_entropy_score", "window_logit_entropy_score"]
 LOGIT_CONFIG = {"top_k": 50, "window_size": 1, "stride": 1}
 
+# Define repository names
+OUTPUT_DIR = f"../data/models/small_dataset_allConfig_seed{SEED}/" # directory to save computed descriptors
 STR_AGG = 'All'
-
-LAYERS = list(range(1, 31, 2)) + [-1] # (List[int]) - Layers from witch retrieve the scores 
-STR_LAYERS = '1:32:2' #"_".join(str(x) for x in LAYERS)
+STR_LAYERS = '1:32:2' 
 
 # ====================================
 # Main function 
@@ -787,7 +802,7 @@ def main() -> None:
             output_path=OUTPUT_DIR + f"id_fit_results_answers_small_seed{SEED}",
             save_dataset_path=f"../data/datasets/id_fit_correct_dataset_small_seed{SEED}.pkl",
             shuffle=True,
-            select_slice=(0, 10_000), # None
+            select_slice=(0, 10_000), # put None instead of 10_000 to load the whole dataset
             batch_size=BATCH_SIZE,
             build_prompt_fn=build_prompt
         )
@@ -870,7 +885,7 @@ def main() -> None:
             id_output_path=f"{OUTPUT_DIR}id_test_results{OUTPUT_TITLE}",
             od_output_path=f"{OUTPUT_DIR}od_test_results{OUTPUT_TITLE}",
             shuffle=True,
-            select_slice=(0,1000), # 8760 big wrong split, 5920 big corr split, 1000 small all config
+            select_slice=(0, 1000), 
             batch_size=BATCH_SIZE,
             build_prompt_fn=build_prompt,
             layers=LAYERS,  
