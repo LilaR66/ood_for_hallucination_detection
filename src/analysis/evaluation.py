@@ -1,4 +1,37 @@
 #!/usr/bin/env python3
+"""
+====================================================================
+ROC/PR Metrics, Threshold Selection, and Confusion-Matrix Utilities
+====================================================================
+
+This module provides utilities to evaluate binary OOD detection from
+per-sample scores (ID vs OOD), including ROC/PR metrics, operating-point
+selection, and confusion-matrix plotting with optional attribute splits.
+
+Main Features
+-------------
+- **Threshold selection**
+  - `youden_threshold`: selects the finite ROC threshold maximizing Youden's J (TPR - FPR).
+  - `threshold_at_target_tpr`: selects the ROC threshold whose TPR is closest to a target (e.g., 0.95).
+
+- **Global metrics from OOD/ID scores**
+  - `compute_metrics`: computes AUROC, FPR@TPR=95% (FPR95), and AUC-PR; returns (fpr, tpr, thresholds),
+    and the selected decision threshold. Optional ROC plotting/saving.
+
+- **Confusion-matrix utilities**
+  - `compute_confusion_matrix_and_metrics`: 2x2 confusion matrix + Accuracy, F1, Precision, Recall,
+    with optional row-normalization and heatmap.
+  - `compute_confusion_matrix_with_attribute_split`: confusion matrix annotated with an attribute
+    breakdown (e.g., answerable vs unanswerable) inside each cell.
+
+Conventions & Notes
+-------------------
+- **Labeling**: OOD is treated as the positive class (1), ID as the negative class (0).
+- **Scores**: higher scores are assumed to indicate higher OOD likelihood.
+- **Robustness**: NaN/Inf scores are filtered out before metric computation.
+- **Operating rule**: samples with `score <= threshold` are classified as ID; `score > threshold` as OOD.
+"""
+
 
 import numpy as np
 from sklearn.metrics import (

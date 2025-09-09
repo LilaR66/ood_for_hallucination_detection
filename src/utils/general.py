@@ -1,4 +1,36 @@
 #!/usr/bin/env python3
+"""
+=====================================================
+General Utilities: Timing, Seeding, and Data Filters
+=====================================================
+
+Small helper utilities for experiment hygiene and quick
+dataset post-processing: elapsed-time printing, global
+random seeding (NumPy / PyTorch / Transformers), simple
+row filtering on dicts, and an "unanswerable" flag adder.
+
+Main Features
+-------------
+- **print_time_elapsed(start, end, label="")**
+  Prints a human-readable elapsed time (mm:ss) with an optional label.
+
+- **seed_all(seed=44)**
+  Sets seeds for Python `random`, NumPy, PyTorch (CPU/GPU, all devices),
+  and (if available) Hugging Face `transformers.set_seed`. Also configures
+  `PYTHONHASHSEED`, and sets:
+    - `torch.backends.cudnn.deterministic = True`
+    - `torch.backends.cudnn.benchmark = False`
+  to favor deterministic behavior.
+
+- **filter_entries(data, column, value=1)**
+  Returns a new dict keeping only rows where `data[column] == value`
+  for every key in `data`. Prints before/after sizes.
+
+- **add_unanswerable_flag(data)**
+  Appends a boolean list `is_unanswerable` indicating whether each
+  string in `data["gen_answers"]` contains the substring "unanswerable"
+  (case-insensitive).
+"""
 
 import torch
 import numpy as np

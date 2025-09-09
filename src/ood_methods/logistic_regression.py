@@ -1,3 +1,29 @@
+#!/usr/bin/env python3
+"""
+===========================================================
+Logistic Regression Classifier for ID vs OOD Descriptors
+===========================================================
+
+This module provides a utility function to train and evaluate a 
+logistic regression classifier that separates in-distribution (ID) 
+from out-of-distribution (OOD) descriptors derived from language 
+model representations.
+Losigtic regression is trained directly on descriptors such as:
+hidden states, attention maps, logits 
+
+Main Features
+-------------
+- **train_logistic_regression_on_descriptors**:
+  - Concatenates ID and OOD descriptors and assigns binary labels 
+    (ID=0, OOD=1).
+  - Filters out rows with non-finite values (NaN/Inf).
+  - Performs a stratified train/test split to preserve class balance.
+  - Builds a scikit-learn pipeline with feature scaling (StandardScaler) 
+    and logistic regression.
+  - Trains the classifier, evaluates it on the test set, and returns 
+    predictions along with test indices.
+"""
+
 import torch
 import numpy as np
 from sklearn.linear_model import LogisticRegression

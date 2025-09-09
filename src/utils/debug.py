@@ -1,4 +1,14 @@
 #!/usr/bin/env python3
+"""
+=================================================
+Array / Tensor Diagnostics & Sanity-Check Helper
+=================================================
+
+Lightweight utility to print compact diagnostics for NumPy arrays
+(or array-like / tensors convertible to NumPy). Designed to quickly
+spot non-finite values, degenerate rows/features, and near-identical
+patterns before running downstream OOD pipelines.
+"""
 
 import numpy as np
 

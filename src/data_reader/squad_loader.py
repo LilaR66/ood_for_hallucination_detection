@@ -303,7 +303,69 @@ class SquadDataset:
         return self.dataset
 
 
-# Dataset loading wrappers using SquadDataset
+
+
+def load_id_fit_dataset():
+    """
+    Load the training split of SQuAD v2.0, keep only answerable questions,
+    and return the result wrapped in a SquadDataset.
+    Adds index and formats answers for consistency.
+
+    Returns
+    -------
+    SquadDataset
+    """
+    ds = load_dataset("squad_v2")['train']
+    return SquadDataset(ds)\
+        .filter_possible()\
+        .add_original_index()\
+        .keep_first_answer_possible()\
+        .add_impossible_flag(0)
+
+
+
+
+def load_id_test_dataset():
+    """
+    Load the validation split of SQuAD v2.0, keep only answerable questions,
+    and return the result wrapped in a SquadDataset.
+    Useful for evaluating model accuracy on in-distribution examples.
+
+    Returns
+    -------
+    SquadDataset
+    """
+    ds = load_dataset("squad_v2")['validation']
+    return SquadDataset(ds)\
+        .filter_possible()\
+        .add_original_index()\
+        .keep_first_answer_possible()\
+        .add_impossible_flag(0)
+
+
+
+
+def load_od_test_dataset():
+    """
+    Load the validation split of SQuAD v2.0, keep only unanswerable questions,
+    and return the result wrapped in a SquadDataset.
+    Sets the "is_impossible" flag to 1.
+    Useful for evaluating model accuracy on out-of-distribution examples.
+
+    Returns
+    -------
+    SquadDataset
+    """
+    ds = load_dataset("squad_v2")['validation']
+    return SquadDataset(ds)\
+        .filter_impossible()\
+        .add_original_index()\
+        .add_impossible_flag(1)\
+        .keep_first_answer_impossible()
+
+
+
+# Old (wrong) loading
 '''
 def load_id_fit_dataset():
     """
@@ -353,58 +415,3 @@ def load_od_test_dataset():
         .add_impossible_flag(1)\
         .keep_first_answer_impossible()
 '''
-
-
-def load_id_fit_dataset():
-    """
-    Load the training split of SQuAD v2.0, keep only answerable questions,
-    and return the result wrapped in a SquadDataset.
-    Adds index and formats answers for consistency.
-
-    Returns
-    -------
-    SquadDataset
-    """
-    ds = load_dataset("squad_v2")['train']
-    return SquadDataset(ds)\
-        .filter_possible()\
-        .add_original_index()\
-        .keep_first_answer_possible()\
-        .add_impossible_flag(0)
-
-
-def load_id_test_dataset():
-    """
-    Load the validation split of SQuAD v2.0, keep only answerable questions,
-    and return the result wrapped in a SquadDataset.
-    Useful for evaluating model accuracy on in-distribution examples.
-
-    Returns
-    -------
-    SquadDataset
-    """
-    ds = load_dataset("squad_v2")['validation']
-    return SquadDataset(ds)\
-        .filter_possible()\
-        .add_original_index()\
-        .keep_first_answer_possible()\
-        .add_impossible_flag(0)
-
-
-def load_od_test_dataset():
-    """
-    Load the validation split of SQuAD v2.0, keep only unanswerable questions,
-    and return the result wrapped in a SquadDataset.
-    Sets the "is_impossible" flag to 1.
-    Useful for evaluating model accuracy on out-of-distribution examples.
-
-    Returns
-    -------
-    SquadDataset
-    """
-    ds = load_dataset("squad_v2")['validation']
-    return SquadDataset(ds)\
-        .filter_impossible()\
-        .add_original_index()\
-        .add_impossible_flag(1)\
-        .keep_first_answer_impossible()

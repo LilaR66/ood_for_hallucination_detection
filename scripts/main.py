@@ -8,7 +8,8 @@ This script provides a modular pipeline for:
 - Seeding reproducibility
 - Loading a Llama model and tokenizer
 - Loading ID dataset and test datasets (that can have OOD and ID samples)
-- Extracting and saving token-level activations (embeddings) for ID and test sets
+- Extracting and saving token-level activations, attention maps and logits 
+ for ID fit and ID/OOD test sets, for all selected layers.
 
 Usage:
 ------

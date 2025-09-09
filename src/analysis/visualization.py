@@ -1,4 +1,33 @@
 #!/usr/bin/env python3
+"""
+===============================================================
+Score Distributions & 3D Embedding Visualization Utilities
+===============================================================
+
+This module offers plotting tools for OOD vs ID score analysis and
+3D visualization of high-dimensional embeddings via PCA, t-SNE, and UMAP.
+
+Main Features
+-------------
+- **Score distributions**
+  - `plot_score_distributions_kde`: smoothed KDE curves for ID/OOD scores
+    with mean ± std markers and configurable bandwidth.
+  - `plot_score_distributions_hist`: overlapping histograms (density-normalized)
+    with a compact summary stats panel.
+
+- **3D embedding visualization**
+  - `plot_dim_reduction_3d_embeddings`: interactive 3D plots (Plotly) using
+    PCA, t-SNE, and/or UMAP, with optional PCA→t-SNE/UMAP chaining.
+  - Supports binary labels (ID=0, OOD=1) or a 4-class breakdown of detection outcomes
+    (well/poorly identified ID/OOD).
+
+Conventions & Notes
+-------------------
+- **Labels**: by default, ID samples are labeled 0 and OOD samples 1.
+- **Standardization**: embeddings are standardized (z-score) prior to any reduction.
+- **Dimensionality**: PCA/t-SNE/UMAP are forced to 3 components for 3D plots.
+- **Initialization**: t-SNE defaults to `init='pca'`; UMAP defaults to `init='spectral'`.
+"""
 
 import numpy as np
 import seaborn as sns

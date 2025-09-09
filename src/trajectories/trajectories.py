@@ -1,20 +1,47 @@
 #!/usr/bin/env python3
 """
-============================================================
-Layerwise Series & Trajectory Analysis Utilities
-============================================================
+=============================================================
+Layerwise Series & Trajectory Analysis Utilities for LLMs
+=============================================================
 
-This module provides tools to:
-- Collect per-layer **series** for a single (group, aggregation) across splits
-  (ID-fit / ID-test / OOD-test), returning compact NumPy arrays:
-    - 1D scalars per layer  -> shape (n, L)
-    - 2D embeddings per layer -> shape (n, L, D)
-- Visualize **scalar** (1D) layerwise sequences side-by-side for ID/OOD/ID-fit.
-- Compute the **dimension joint volatility** (trajectory total variation) for
-  1D and 2D per-layer trajectories.
-- Estimate per-layer ID **mean/variance** and compute **diagonal Mahalanobis**
-  distances per layer for new samples.
+Tools to assemble per-layer sequences from descriptor trees, visualize
+scalar trajectories across layers, and quantify layerwise dynamics
+(e.g., total-variation-style volatility), plus lightweight
+ID-reference statistics and diagonal Mahalanobis scoring.
+
+Main Features
+-------------
+- **Series building**
+  - `collect_layerwise_series`: gather a single (group, aggregation) across layers
+    and splits (ID-fit / ID-test / OOD-test). Returns compact arrays:
+      * scalars -> (n, L)
+      * vectors -> (n, L, D)
+
+- **Visualization**
+  - `plot_layerwise_scalar_series`: side-by-side plots of scalar sequences for
+    ID-test, OOD-test, and ID-fit with shared y-limits.
+
+- **Trajectory metrics (per sample)**
+  - `compute_dimension_joint_volatility_1D`: total variation on 1D sequences (n, L).
+  - `compute_dimension_joint_volatility_2D`: stepwise L2-variation on 2D sequences (n, L, D).
+    (Finite-step robust: ignores NaN/Inf differences.)
+
+- **ID reference & scoring**
+  - `compute_id_layer_stats`: per-layer mean/variance from ID-fit embeddings (L, D),
+    with variance floor for stability.
+  - `layerwise_diag_mahalanobis`: diagonal Mahalanobis distances per layer, shape (n, L).
+
+Conventions & Notes
+-------------------
+- **Splits**: expects three splits (`id_fit`, `id_test`, `od_test`) with a common descriptor tree.
+- **Shapes**:
+  - Scalars per layer -> arrays of shape (n, L)
+  - Vectors per layer -> arrays of shape (n, L, D)
+- **Groups/Aggregations**: `group in {"hidden","attention","logit"}` and `aggregation` must exist
+  at each requested layer; mixed 1D/2D across layers is rejected.
+- **Numerical robustness**: NaN/Inf handling in volatility; variance floor `eps` in stats/scoring.
 """
+
 
 from typing import Sequence, Dict, Any, Literal, Iterable, Tuple
 import numpy as np
