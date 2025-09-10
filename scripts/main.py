@@ -4,7 +4,7 @@
 Main pipeline for extracting and saving embeddings
 ============================================================
 This script mirrors the functionality of the notebook `part1_extracted_descriptors.ipynb`: 
-the notebook exposes intermediate steps for clarity, whereas the script automates the end-to-end 
+the notebook exposes intermediate steps for clarity, whereas this script automates the end-to-end 
 descriptor extraction.
 
 This script provides a modular pipeline for:
@@ -72,6 +72,8 @@ def clear_cache():
     gc.collect()
 
 
+
+
 def prepare_fit_dataset(
     seed: int = 44,
     shuffle: bool = False,
@@ -113,6 +115,8 @@ def prepare_fit_dataset(
         id_fit_dataset = id_fit_dataset.slice(idx_start=select_slice[0], idx_end=select_slice[1])
     
     return id_fit_dataset
+
+
 
 
 def prepare_test_dataset(
@@ -166,6 +170,7 @@ def prepare_test_dataset(
         od_test_dataset = od_test_dataset.slice(idx_start=select_slice[0], idx_end=select_slice[1])
     
     return id_test_dataset, od_test_dataset
+
 
 
 
@@ -252,252 +257,9 @@ def run_filter_generated_answers_by_similarity_pipeline(
     del model, tokenizer, merged, id_fit_answers, ids_correct_answers, id_fit_correct_dataset
 
 
-def retrieve_fit_inputs_descriptor_pipeline(
-    model_name: str,
-    seed: int,
-    output_path: str,
-    custom_dataset_path: str = None,
-    shuffle: bool = False,
-    select_slice: Optional[Tuple[int, int]]  = None,
-    batch_size: int = 16,
-    build_prompt_fn: Callable = None,
-    layers: List[int] = [-1],  
-    hidden_agg: List[str] = ["avg_emb", "last_emb", "max_emb", "first_gen_emb", "hidden_score", "feat_var_emb"],
-    attn_agg: List[str] = ["attn_score"],
-    logit_agg: List[str] = ["perplexity_score", "logit_entropy_score", "window_logit_entropy_score"],
-    logit_config: dict = {"top_k": 50, "window_size": 1, "stride": 1},
-    start_offset: int = 0,
-    end_offset: int = 0
-) -> None:
-    """
-    Extract and save activations/attention/logits descriptors for the in-distribution (ID) fit dataset.
-
-    Parameters
-    ----------
-    model_name : str
-        Name or path of the pretrained Llama model to load.
-    seed : int
-        Random seed for reproducibility.
-    output_path : str
-        Path to the directory where extracted answers will be saved as individual pickle batch files.
-    custom_dataset_path : str
-        Path to a custom dataset to extract token embeddings. 
-        If None, the default dataset is loaded with prepare_fit_dataset() 
-    shuffle : bool
-        If true the dataset if shuffled with seed. 
-    select_slice : Optional[Tuple[int, int]]
-        (start, end) indices for slicing the dataset.
-    batch_size : int
-        Number of samples per batch for inference.
-    build_prompt_fn : callable
-        Function to build a prompt from context and question.
-    layers : List[int]
-        List of indices of the transformer layers to extract activations from (default: [-1] for last layer).
-    hidden_agg : List[str], optional
-        List of aggregation modes to compute on token activations. Possible modes include:
-            "avg_emb", "last_emb", "max_emb", "first_gen_emb", "hidden_score", "feat_var_emb".
-    attn_agg : List[str], optional
-        List of attention-based descriptors to compute. Supported: "attn_eig_prod".
-    logit_agg : List[str], optional
-        List of logit-based descriptors to compute. Supported:
-            "perplexity_score", "logit_entropy_score", "window_logit_entropy_score".
-    logit_config : dict, optional
-        Configuration dictionary for logit-based descriptor functions, with keys such as:
-            - "top_k": int, number of top logits considered (default 50)
-            - "window_size": int, window size for windowed entropy (default 1)
-            - "stride": int, stride for windowed entropy (default 1)
-    start_offset : int
-        Number of tokens to skip from the beginning of the sequence when extracting token 
-        activations with extract_token_activations_fn.
-    end_offset : int
-        The number of tokens to skip from the end of the sequence when extracting token
-        activations with extract_token_activations_fn.
-    """  
-
-    # Seed everything
-    # -----------------------------------
-    seed_all(seed)
-
-    # Load model
-    # -----------------------------------
-    model, tokenizer = load_llama(model_name)
-
-    # Load ID dataset
-    # -----------------------------------
-    if custom_dataset_path:
-        with open(custom_dataset_path, "rb") as f:
-            id_fit_dataset = pickle.load(f)
-        print(f"loaded dataset from {custom_dataset_path}")
-    else:
-        id_fit_dataset = prepare_fit_dataset(seed, shuffle, select_slice)
-
-    # Retrieve ID descriptors and save results
-    # -----------------------------------
-    print("\nStart retrieving ID fit descriptors from inputs...")
-    t0 = time.time()
-    run_prompt_descriptor_extraction(
-        model=model,
-        tokenizer=tokenizer,
-        dataset=id_fit_dataset,
-        batch_size=batch_size,
-        idx_start_sample=0,
-        max_samples=len(id_fit_dataset),
-        save_to_pkl=True,
-        output_path=output_path,
-        build_prompt_fn=build_prompt_fn,
-        layers=layers,  
-        hidden_agg=hidden_agg,
-        attn_agg=attn_agg,
-        logit_agg=logit_agg,
-        logit_config=logit_config,
-        start_offset=start_offset,
-        end_offset=end_offset
-    )
-    t1 = time.time()
-    print("...end!")
-    print_time_elapsed(t0, t1, label="ID descriptors: ")
-
-    # Merge all batches, save as a single file and delete batch directory
-    merged = merge_batches_and_cleanup(directory=output_path, delete=True, confirm=True) 
-
-    # Free memory
-    del id_fit_dataset, model, tokenizer, merged, 
 
 
-def retrieve_test_inputs_descriptor_pipeline(
-    model_name: str,
-    seed: int,
-    id_output_path: str,
-    od_output_path: str,
-    shuffle: bool = False,
-    select_slice: Optional[Tuple[int, int]]  = None,
-    batch_size: int = 16,
-    build_prompt_fn: Callable = None,
-    layers: List[int] = [-1],  
-    hidden_agg: List[str] = ["avg_emb", "last_emb", "max_emb", "first_gen_emb", "hidden_score", "feat_var_emb"],
-    attn_agg: List[str] = ["attn_score"],
-    logit_agg: List[str] = ["perplexity_score", "logit_entropy_score", "window_logit_entropy_score"],
-    logit_config: dict = {"top_k": 50, "window_size": 1, "stride": 1},
-    start_offset: int = 0,
-    end_offset: int = 0
-) -> None:
-    """
-    Extract and save activations/attention/logits descriptors for the in-distribution (ID)  
-    and out-of-distribution (OOD) test datasets.
-
-    Parameters
-    ----------
-    model_name : str
-        Name or path of the pretrained Llama model to load.
-    id_output_path : str
-        Path to the directory where ID test embeddings will be saved as individual pickle batch files.
-    od_output_path : str
-        Path to the directory where OOD test embeddings will be saved as individual pickle batch files.
-    seed : int
-        Random seed for reproducibility.
-    shuffle : bool
-        If true the dataset if shuffled with seed. 
-    select_slice : Optional[Tuple[int, int]]
-        (start, end) indices for slicing the dataset.
-    batch_size : int
-        Number of samples per batch for inference.
-    build_prompt_fn : callable
-        Function to build a prompt from context and question.
-    layers : List[int]
-        List of indices of the transformer layers to extract activations from (default: [-1] for last layer).
-    hidden_agg : List[str], optional
-        List of aggregation modes to compute on token activations. Possible modes include:
-            "avg_emb", "last_emb", "max_emb", "first_gen_emb", "hidden_score", "feat_var_emb".
-    attn_agg : List[str], optional
-        List of attention-based descriptors to compute. Supported: "attn_eig_prod".
-    logit_agg : List[str], optional
-        List of logit-based descriptors to compute. Supported:
-            "perplexity_score", "logit_entropy_score", "window_logit_entropy_score".
-    logit_config : dict, optional
-        Configuration dictionary for logit-based descriptors functions, with keys such as:
-            - "top_k": int, number of top logits considered (default 50)
-            - "window_size": int, window size for windowed entropy (default 1)
-            - "stride": int, stride for windowed entropy (default 1)
-    start_offset : int
-        Number of tokens to skip from the beginning of the sequence when extracting token 
-        activations with extract_token_activations_fn.
-    end_offset : int
-        The number of tokens to skip from the end of the sequence when extracting token
-        activations with extract_token_activations_fn.
-    """  
-    # Seed everything
-    # -----------------------------------
-    seed_all(seed)
-
-    # Load model
-    # -----------------------------------
-    model, tokenizer = load_llama(model_name)
-
-    # Load ID and OOD test dataset
-    # -----------------------------------
-    id_test_dataset, od_test_dataset = prepare_test_dataset(seed, shuffle, select_slice)
-
-    # Retrieve test descriptors and save results 
-    # -----------------------------------
-    # Extract OOD test descriptors
-    print("\nStart retrieving test impossible descriptors from inputs...")
-    t2 = time.time()
-    run_prompt_descriptor_extraction(
-        model=model,
-        tokenizer=tokenizer,
-        dataset=od_test_dataset,
-        batch_size=batch_size,
-        idx_start_sample=0,
-        max_samples=len(od_test_dataset),
-        save_to_pkl=True,
-        output_path=od_output_path,
-        build_prompt_fn=build_prompt_fn,
-        layers=layers,  
-        hidden_agg=hidden_agg,
-        attn_agg=attn_agg,
-        logit_agg=logit_agg,
-        logit_config=logit_config,
-        start_offset=start_offset,
-        end_offset=end_offset
-    )
-    t3 = time.time()
-    print("...end!")
-    print_time_elapsed(t2, t3, label="Impossible test descriptors: ")
-
-    # Extract ID test descriptors
-    print("\nStart retrieving test possible descriptors from inputs...")
-    t4 = time.time()
-    run_prompt_descriptor_extraction(
-        model=model,
-        tokenizer=tokenizer,
-        dataset=id_test_dataset,
-        batch_size=batch_size,
-        idx_start_sample=0,
-        max_samples=len(id_test_dataset),
-        save_to_pkl=True,
-        output_path=id_output_path,
-        build_prompt_fn=build_prompt_fn,
-        layers=layers,  
-        hidden_agg=hidden_agg,
-        attn_agg=attn_agg,
-        logit_agg=logit_agg,
-        logit_config=logit_config,
-        start_offset=start_offset,
-        end_offset=end_offset
-    )
-    t5 = time.time()
-    print("end!")
-    print_time_elapsed(t4, t5, label="Possible test descriptors: ")
-
-    # Merge all batches, save as a single file and delete batch directory
-    od_merged = merge_batches_and_cleanup(directory=od_output_path, delete=True, confirm=True) 
-    id_merged = merge_batches_and_cleanup(directory=id_output_path, delete=True, confirm=True) 
-
-    # Free memory
-    del od_test_dataset, id_test_dataset, model, tokenizer, od_merged, id_merged
-
-
-def retrieve_fit_answers_descriptor_pipeline(
+def retrieve_fit_descriptor_pipeline(
     model_name: str,
     seed: int,
     output_path: str,
@@ -516,8 +278,8 @@ def retrieve_fit_answers_descriptor_pipeline(
     end_offset: int = 0,
 ) -> None:
     """
-    Extract and save activations/attention/logits descriptors for the in-distribution (ID) 
-    fit dataset of the generated answers.
+    Extract and save activations(hidden states)/attention/logits descriptors for 
+    the in-distribution (ID) fit dataset.
 
     Parameters
     ----------
@@ -616,7 +378,8 @@ def retrieve_fit_answers_descriptor_pipeline(
 
 
 
-def retrieve_test_answers_descriptor_pipeline(
+
+def retrieve_test_descriptor_pipeline(
     model_name: str,
     seed: int,
     id_output_path: str,
@@ -635,8 +398,8 @@ def retrieve_test_answers_descriptor_pipeline(
     end_offset: int = 0,
 ) -> None:
     """
-    Extract and save activations/attention/logits descriptors for the in-distribution (ID) 
-    and out-of-distribution (OOD) test datasets of the generated answers.
+    Extract and save activations(hidden states)/attention/logits descriptors  
+    for the in-distribution (ID) and out-of-distribution (OOD) test datasets.
 
     Parameters
     ----------
@@ -761,7 +524,7 @@ def retrieve_test_answers_descriptor_pipeline(
 # ====================================
 # Global variables  
 # ====================================
-SEED = 2025 #42, 44, 777, 123, 2025,
+SEED = 2025         # 42, 44, 777, 123, 2025,
 BATCH_SIZE = 16
 MODEL_NAME = "meta-llama/Llama-2-7b-chat-hf"
 
@@ -772,8 +535,8 @@ ACTIVATION_SOURCE = "promptGeneration" # can be 'generation', 'prompt', 'promptG
 LAYERS = list(range(1, 31, 2)) + [-1] # (List[int]) - Layers from witch retrieve the scores 
 
 # Optional offset to exclude a prompt span
-START_OFFSET = 0 #40
-END_OFFSET = 0   #-4
+START_OFFSET = 0   # 40
+END_OFFSET = 0     # -4
 
 # Define descriptors aggregations 
 HIDDEN_AGG = ["avg_emb", "last_emb", "max_emb", "first_gen_emb", "hidden_score", "feat_var_emb"]
@@ -789,12 +552,23 @@ STR_LAYERS = '1:32:2'
 # ====================================
 # Main function 
 # ====================================
+
+# (｀∀´)Ψ mouahahah
 def main() -> None:
     """
-    Main entry point for the embedding extraction pipeline.
+    Main entry point for the descriptor extraction pipeline.
     """
 
-    if False:
+    """
+    Run STEP 1 code **once** per SEED.
+    The dataset saved at `save_dataset_path` can then be reused across all configurations:
+    - Descriptor groups/aggregations: HIDDEN_AGG, ATTN_AGG, LOGIT_AGG
+    - Activation source: ACTIVATION_SOURCE
+    - Layer selection: LAYERS
+    - Prompt offsets: START_OFFSET, END_OFFSET 
+    """
+    # STEP 1
+    if True: 
         clear_cache()
         run_filter_generated_answers_by_similarity_pipeline(
             model_name=MODEL_NAME,
@@ -813,51 +587,19 @@ def main() -> None:
     print(f"Processing OUTPUT_TITLE : {OUTPUT_TITLE}")
     print(f"===========================================================\n\n")
 
-    if False: 
-        clear_cache()
-        retrieve_fit_inputs_descriptor_pipeline(
-            model_name=MODEL_NAME,
-            seed=SEED,
-            output_path=f"{OUTPUT_DIR}id_fit_results{OUTPUT_TITLE}",
-            custom_dataset_path="../data/datasets/id_fit_correct_dataset.pkl",
-            shuffle=True,
-            select_slice=(0,10_000),
-            batch_size=BATCH_SIZE,
-            build_prompt_fn=build_prompt,
-            layers=LAYERS,  
-            hidden_agg=HIDDEN_AGG,
-            attn_agg=ATTN_AGG,
-            logit_agg=LOGIT_AGG,
-            logit_config=LOGIT_CONFIG,
-            start_offset=START_OFFSET,
-            end_offset=END_OFFSET
-        )
-
-
-    if False: 
-        clear_cache()
-        retrieve_test_inputs_descriptor_pipeline(
-            model_name=MODEL_NAME,
-            seed=SEED,
-            id_output_path=f"{OUTPUT_DIR}id_test_results{OUTPUT_TITLE}",
-            od_output_path=f"{OUTPUT_DIR}od_test_results{OUTPUT_TITLE}",
-            shuffle=True,
-            select_slice=(0,1000),
-            batch_size=BATCH_SIZE,
-            build_prompt_fn=build_prompt,
-            layers=LAYERS,  
-            hidden_agg=HIDDEN_AGG,
-            attn_agg=ATTN_AGG,
-            logit_agg=LOGIT_AGG,
-            logit_config=LOGIT_CONFIG,
-            start_offset=START_OFFSET,
-            end_offset=END_OFFSET
-        )
-
-
+    
+    """
+    Run **STEP 2 and 3** for all configurations of:
+    - SEED
+    - Descriptor groups/aggregations: HIDDEN_AGG, ATTN_AGG, LOGIT_AGG
+    - Activation source: ACTIVATION_SOURCE
+    - Layer selection: LAYERS
+    - Prompt offsets: START_OFFSET, END_OFFSET
+    """
+    # STEP 2
     if True:
         clear_cache()
-        retrieve_fit_answers_descriptor_pipeline(
+        retrieve_fit_descriptor_pipeline(
             model_name=MODEL_NAME,
             seed=SEED,
             output_path=f"{OUTPUT_DIR}id_fit_results{OUTPUT_TITLE}",
@@ -876,10 +618,10 @@ def main() -> None:
             end_offset=END_OFFSET      
         )
 
-    
+    # STEP 3
     if True:
         clear_cache()
-        retrieve_test_answers_descriptor_pipeline(
+        retrieve_test_descriptor_pipeline(
             model_name=MODEL_NAME,
             seed=SEED,
             id_output_path=f"{OUTPUT_DIR}id_test_results{OUTPUT_TITLE}",
@@ -897,36 +639,6 @@ def main() -> None:
             start_offset=START_OFFSET,
             end_offset=END_OFFSET      
         )
-
-    
-    # Evil Code for squatting on deel machines 
-    # (｀∀´)Ψ mouahahah
-    if False:
-        import time
-        try:
-            while True: 
-                clear_cache()
-                #OUTPUT_DIR = "../results/raw/TEST/"
-                print("Infinite loop.")
-                retrieve_test_inputs_embeddings_pipeline(
-                    model_name=MODEL_NAME,
-                    seed=SEED,
-                    id_output_path=f"{OUTPUT_DIR}id_test_results{OUTPUT_PROMPT_TITLE}",
-                    od_output_path=f"{OUTPUT_DIR}od_test_results{OUTPUT_PROMPT_TITLE}",
-                    shuffle=True,
-                    select_slice=(0,100), #(0,1000),
-                    batch_size=BATCH_SIZE,
-                    build_prompt_fn=build_prompt,
-                    layer_idx=LAYER,
-                    extract_token_activations_fn=partial(extract_token_activations, mode=EXTRACTION_MODE),
-                    start_offset=START_OFFSET,
-                    end_offset=END_OFFSET
-                )
-                time.sleep(120)  # Pause after execution
-        except KeyboardInterrupt:
-            print("Stop of the infinite loop.")
-
-
 
 
 if __name__ == "__main__":
