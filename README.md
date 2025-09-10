@@ -62,8 +62,10 @@ The first run of `scripts/main.py` or `notebooks/part1_extract_descriptors.ipynb
 
 ```
 ├── LICENSE            <- Open-source license
+│   
 ├── Makefile           <- Makefile with commands such as `make create_env`, `make activate_env`,
 │                         or `make make_public`
+│
 ├── README.md          <- The top-level README for developers using this project
 │
 │
@@ -72,8 +74,9 @@ The first run of `scripts/main.py` or `notebooks/part1_extract_descriptors.ipynb
 │
 ├── data/
 │   ├── datasets/      <- Datasets generated when running `scripts/main.py` or 
-│                         `notebooks/part1_extract_descriptors.ipynb`. 
-│                         Initially empty.
+│   │                     `notebooks/part1_extract_descriptors.ipynb`. 
+│   │                     Initially empty.
+│   │
 │   └── models/        <- Model predictions generated when running `scripts/main.py` or 
 │                         `notebooks/part1_extract_descriptors.ipynb`.
 │                         Initially empty.
@@ -83,7 +86,8 @@ The first run of `scripts/main.py` or `notebooks/part1_extract_descriptors.ipynb
 │   │     <- Main notebook #1. Extracts descriptors (computed from hidden states,
 │   │        attention maps, and logits) that will later be used for OOD-based 
 │   │        hallucination detection. This notebook also serves as a usage example.
-│   ├── part2_analyse_results.ipynb
+│   │
+│   └── part2_analyse_results.ipynb
 │         <- Main notebook #2. Applies OOD methods, anomaly detection, linear probing, 
 │            and layer-wise trajectory analysis to the descriptors extracted in part 1
 │            (either via the notebook `part1_extract_descriptors.ipynb` or via 
@@ -91,13 +95,14 @@ The first run of `scripts/main.py` or `notebooks/part1_extract_descriptors.ipynb
 │
 │
 ├── scripts/
-│   ├── main.py        <- Equivalent to `part1_extract_descriptors.ipynb` but fully 
+│   └── main.py        <- Equivalent to `part1_extract_descriptors.ipynb` but fully 
 │                         encapsulated and automated in a script that can be run with 
 │                         `python scripts/main.py`.
 │
 ├── results/
 │   ├── raw/           <- Raw result files (.csv) generated during analysis with 
-│                         `notebooks/part2_analyse_results.ipynb`.
+│   │                     `notebooks/part2_analyse_results.ipynb`.
+│   │
 │   └── figures/       <- Figures produced by `notebooks/part2_analyse_results.ipynb`.
 │
 ├── requirements.txt   <- Requirements file (from `pip freeze`) for reproducing the 
@@ -116,24 +121,24 @@ The first run of `scripts/main.py` or `notebooks/part1_extract_descriptors.ipynb
     │                         answer and the ground-truth answer
     │
     ├── data_reader/       <- Functions for loading and formatting the SQuAD 2.0 dataset 
-    │   │                      (`squad_loader.py`) and for loading/saving data 
-    │   │                      (`pickle_io.py`).
+    │                          (`squad_loader.py`) and for loading/saving data 
+    │                          (`pickle_io.py`).
     │
     ├── inference/         <- Functions to input (context, question) pairs into the model, 
-    │   │                      let the model generate an answer, and extract internal 
-    │   │                      descriptors (hidden states, attention maps, logits) 
-    │   │                      for each transformer layer, either for the prompt alone, 
-    │   │                      the generation alone, or the concatenation prompt + generation.
+    │                          let the model generate an answer, and extract internal 
+    │                          descriptors (hidden states, attention maps, logits) 
+    │                          for each transformer layer, either for the prompt alone, 
+    │                          the generation alone, or the concatenation prompt + generation.
     │
     ├── model_loader/      <- Utilities to load LLaMA-2-7B locally
     │
     ├── trajectories/      <- Functions for layer-wise analysis of descriptors trajectories.
     │
     ├── ood_methods/       <- Functions to apply OOD detection (DeepKNN, cosine similarity,
-    │   │                      Mahalanobis distance) on the internal descriptors extracted 
-    │   │                      via `part1_extract_descriptors.ipynb` or `scripts/main.py`.  
-    │   │                      Also includes supervised probes (logistic regression) and 
-    │   │                      anomaly detection methods (Isolation Forest, One-Class SVM).
+    │                          Mahalanobis distance) on the internal descriptors extracted 
+    │                          via `part1_extract_descriptors.ipynb` or `scripts/main.py`.  
+    │                          Also includes supervised probes (logistic regression) and 
+    │                          anomaly detection methods (Isolation Forest, One-Class SVM).
     │
     └── utils/             <- General-purpose utility functions
 
