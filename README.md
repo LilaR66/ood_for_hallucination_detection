@@ -84,8 +84,9 @@ The first run of `scripts/main.py` or `notebooks/part1_extract_descriptors.ipynb
 │   │        attention maps, and logits) that will later be used for OOD-based 
 │   │        hallucination detection. This notebook also serves as a usage example.
 │   ├── part2_analyse_results.ipynb
-│         <- Main notebook #2. Applies OOD methods, linear probing, anomaly detection
-│            to the descriptors extracted in part 1 (either via the notebook or via 
+│         <- Main notebook #2. Applies OOD methods, anomaly detection, linear probing, 
+│            and layer-wise trajectory analysis to the descriptors extracted in part 1
+│            (either via the notebook `part1_extract_descriptors.ipynb` or via 
 │            `scripts/main.py`). Performs analysis and visualization of the results.           
 │
 │
@@ -125,6 +126,8 @@ The first run of `scripts/main.py` or `notebooks/part1_extract_descriptors.ipynb
     │   │                      the generation alone, or the concatenation prompt + generation.
     │
     ├── model_loader/      <- Utilities to load LLaMA-2-7B locally
+    │
+    ├── trajectories/      <- Functions for layer-wise analysis of descriptors trajectories.
     │
     ├── ood_methods/       <- Functions to apply OOD detection (DeepKNN, cosine similarity,
     │   │                      Mahalanobis distance) on the internal descriptors extracted 
