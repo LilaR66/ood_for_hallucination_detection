@@ -1,4 +1,4 @@
-.PHONY: create_env activate_env clean lint make_public
+.PHONY: create_env activate_env clean lint make_public help
 
 #################################################################################
 # GLOBALS                                                                       #
@@ -6,9 +6,11 @@
 
 PROFILE = default
 PROJECT_NAME = ood_for_hallucination_detection
-PYTHON_INTERPRETER = python3
+CONDA_ENV_NAME = oodhallu_env
 
-HAS_CONDA=False
+# detect conda base path dynamically
+CONDA_BASE := $(shell conda info --base)
+CONDA_SH := $(CONDA_BASE)/etc/profile.d/conda.sh
 
 #################################################################################
 # COMMANDS                                                                      #
@@ -24,17 +26,17 @@ lint:
 	flake8 src
 
 
-## Set up python interpreter environment
+## Create conda env and install dependencies
 create_env:
-	@ $(PYTHON_INTERPRETER) -m venv $(PROJECT_NAME)_env 
-	@ . $(PROJECT_NAME)_env/bin/activate
-	@ pip install --upgrade pip 
-	@ pip install -r requirements.txt 
-	@ pip install -e .
+	@echo "Creating conda environment $(CONDA_ENV_NAME) with Python 3.11.13..."
+	@conda create --name $(CONDA_ENV_NAME) python=3.11.13 -y
+	@echo "Activating conda environment and installing dependencies..."
+	@bash -c "source $(CONDA_SH) && conda activate $(CONDA_ENV_NAME) && pip install --upgrade pip && pip install -r requirements.txt && pip install -e ."
 
-## Activate environment
+## Activate conda environment (run in interactive shell)
 activate_env:
-	@ . $(PROJECT_NAME)_env/bin/activate
+	@echo "To activate the environment, run:"
+	@echo "source $(CONDA_SH) && conda activate $(CONDA_ENV_NAME)"
 
 ## Make the project public
 make_public:
