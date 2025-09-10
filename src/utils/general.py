@@ -43,6 +43,7 @@ def print_time_elapsed(start, end, label=""):
     print(f"{label}Time elapsed: {int(mins):02d} min {int(secs):02d} sec\n")
 
 
+
 def seed_all(seed: int = 44) -> None:
     random.seed(seed)                          # Python random
     np.random.seed(seed)                       # NumPy
@@ -59,10 +60,12 @@ def seed_all(seed: int = 44) -> None:
         pass
 
 
+
 def filter_entries(data: dict, column: str, value=1) -> dict:
     """
     Filter a result dictionary to keep only entries where the specified 
-    column equals a given value.
+    column equals a given value i.e. where data[column][i] == value. 
+    Works with nested numpy arrays in the 'descriptors' key. 
 
     Parameters
     ----------
@@ -80,20 +83,41 @@ def filter_entries(data: dict, column: str, value=1) -> dict:
         Filtered dictionary with only the selected entries.
 
     """
-    # Compute size before filtering
+
     original_size = len(data[column])
-    # Find indices to keep
     keep_indices = [i for i, val in enumerate(data[column]) if val == value]
-    # Filter the dictionary
-    filtered_data = {
-        key: [values[i] for i in keep_indices]
-        for key, values in data.items()
-    }
-    # Compute and print size after filtering
-    filtered_size = len(filtered_data[column])
-    # Display information
+    filtered_size = len(keep_indices)
     print(f"Size before filtering: {original_size}. Size after filtering: {filtered_size}. Filtered {original_size - filtered_size} samples.")
+
+    filtered_data = {}
+
+    # Filter top-level lists
+    for k, v in data.items():
+        if k == "descriptors":
+            continue  # handled separately
+        filtered_data[k] = [v[i] for i in keep_indices]
+
+    # Filter descriptors nested structure
+    def filter_numpy_arrays(descr):
+        filtered_descr = {}
+        for layer, layer_dict in descr.items():
+            filtered_layer = {}
+            for dtype, dtype_dict in layer_dict.items():
+                filtered_dtype = {}
+                for mode, arr in dtype_dict.items():
+                    if isinstance(arr, np.ndarray):
+                        filtered_dtype[mode] = arr[keep_indices]
+                    else:
+                        filtered_dtype[mode] = arr  # fallback if not ndarray
+                filtered_layer[dtype] = filtered_dtype
+            filtered_descr[layer] = filtered_layer
+        return filtered_descr
+
+    filtered_data["descriptors"] = filter_numpy_arrays(data["descriptors"])
+
     return filtered_data
+
+
 
 
 def add_unanswerable_flag(data: dict) -> dict:

@@ -5,10 +5,11 @@ import numpy as np
 import torch
 import matplotlib.pyplot as plt
 from tqdm import tqdm
-from typing import List, Dict
+from typing import List, Dict, Literal, Any
 import warnings
 warnings.filterwarnings('ignore')
 from src.analysis.evaluation import compute_metrics
+from src.ood_methods.ood_main import compute_ood_scores
 
 
 
@@ -40,17 +41,17 @@ def bootstrap_sample_indices(n_samples: int, n_bootstrap: int = 1000) -> List[np
     return bootstrap_indices
 
     
-
-
 def bootstrap_analysis(
-    id_fit_embeddings: torch.Tensor,
-    id_test_embeddings: torch.Tensor,
-    od_test_embeddings: torch.Tensor,
+    id_fit_descriptors: torch.Tensor,
+    id_test_descriptors: torch.Tensor,
+    od_test_descriptors: torch.Tensor,
     n_fit_samples: List[int],
     n_test_samples: List[int],
-    compute_ood_score_fn: callable,
+    method: Literal["dknn", "cosine", "mahalanobis", "ocsvm", "isoforest", "raw_scores"],
     n_bootstrap: int = 100,
-    **kwargs
+    threshold_strategy: Literal["youden", "target_tpr"] = "youden",
+    target_tpr: float = 0.95,
+    **method_kwargs: Any,
 ) -> Dict:
     """
     Perform bootstrap analysis to evaluate OOD detection performance across different sample sizes.
@@ -67,32 +68,41 @@ def bootstrap_analysis(
     
     Parameters
     ----------
-    id_fit_embeddings : torch.Tensor
-        Embeddings from in-distribution training samples.
-        Shape: [n_total_fit_samples, embedding_dim]
-    id_test_embeddings : torch.Tensor
-        Embeddings from in-distribution test samples.
-        Shape: [n_total_id_test_samples, embedding_dim]
-    od_test_embeddings : torch.Tensor
-        Embeddings from out-of-distribution test samples.
-        Shape: [n_total_ood_test_samples, embedding_dim]
+    id_fit_descriptors : torch.Tensor
+        Descriptors from in-distribution training samples.
+        Shape: [n_total_fit_samples, embedding_dim] or [n_total_fit_samples, ]
+    id_test_descriptors : torch.Tensor
+        Desriptors from in-distribution test samples.
+        Shape: [n_total_id_test_samples, embedding_dim] or [n_total_id_test_samples, ]
+    od_test_descriptors : torch.Tensor
+        Descriptors from out-of-distribution test samples.
+        Shape: [n_total_ood_test_samples, embedding_dim] or [n_total_ood_test_samples, ]
     n_fit_samples : List[int]
         List of training sample sizes to evaluate
     n_test_samples : List[int]
         List of test sample sizes to evaluate
-    compute_ood_score_fn : callable
-        Function for OOD detection. Must accept:
-        - id_fit_embeddings, id_test_embeddings, od_test_embeddings
-        - Additional kwargs for method-specific parameters
-        Must return: (scores_id, scores_ood)
+    method : str
+        Method used for OOD detection. One of:
+          - "raw_scores":       directly use given 1D descriptors as OOD scores
+                                (for "attention", "logits" or "token_svd_score" in "hidden" 
+                                already computed as scalar scores).
+          - "dknn":             Deep k-NN distance to k-th neighbor (higher => OOD).
+          - "cosine":           (sign flipped) Cosine similarity (higher => OOD).
+          - "mahalanobis":      Mahalanobis distance to ID distribution (higher => OOD).
+          - "ocsvm":            (sign flipped) One-class SVM scores (higher => OOD).
+          - "isoforest":        (sign flipped) Isolation forest anomaly scores (higher => OOD).
     n_bootstrap : int, optional (default=100)
         Number of bootstrap iterations to perform for each combination of training and 
         test sample sizes. Used to estimate the statistical variability (mean, std) 
         of performance metrics and plot confidence intervals. 
-    **kwargs
-        Additional keyword arguments passed to evaluate_ood_performance_fn
+    threshold_strategy : {"youden", "target_tpr"}, default "youden"
+        Strategy used to select the operating threshold.
+    target_tpr : float, default 0.95
+        Target TPR used when `threshold_strategy="target_tpr"`.
+    **method_kwargs
+        Additional keyword arguments passed to OOD detection method
         (e.g., k=5 for DKNN, batch_size=1000)
-        
+        s
     Returns
     -------
     results : Dict
@@ -128,23 +138,34 @@ def bootstrap_analysis(
             
             for _ in range(n_bootstrap):
                 # Sample fit data
-                fit_indices = np.random.choice(len(id_fit_embeddings), size=min(n_fit, len(id_fit_embeddings)), replace=False)
-                fit_sample = id_fit_embeddings[fit_indices]
+                fit_indices = np.random.choice(len(id_fit_descriptors), size=min(n_fit, len(id_fit_descriptors)), replace=False)
+                fit_sample = id_fit_descriptors[fit_indices]
                 
                 # Sample test data
-                id_test_indices = np.random.choice(len(id_test_embeddings), size=min(n_test, len(id_test_embeddings)), replace=False)
-                od_test_indices = np.random.choice(len(od_test_embeddings), size=min(n_test, len(od_test_embeddings)), replace=False)
+                id_test_indices = np.random.choice(len(id_test_descriptors), size=min(n_test, len(id_test_descriptors)), replace=False)
+                od_test_indices = np.random.choice(len(od_test_descriptors), size=min(n_test, len(od_test_descriptors)), replace=False)
                 
-                id_test_sample = id_test_embeddings[id_test_indices]
-                od_test_sample = od_test_embeddings[od_test_indices]
+                id_test_sample = id_test_descriptors[id_test_indices]
+                od_test_sample = od_test_descriptors[od_test_indices]
                 
                 try:
                     # Perform OOD detection: compute OOD scores
-                    scores_id, scores_ood = compute_ood_score_fn(
-                        fit_sample, id_test_sample, od_test_sample, **kwargs
+                    scores_id, scores_ood = compute_ood_scores(
+                        method=method,
+                        id_fit_descriptors=fit_sample,
+                        id_test_descriptors=id_test_sample,
+                        od_test_descriptors=od_test_sample,
+                        **method_kwargs
                     )
+
                     # Compute metrics
-                    auroc, fpr95, aucpr, _ ,_ ,_ ,_ = compute_metrics(scores_id, scores_ood, plot=False)
+                    auroc, fpr95, aucpr, _, _, _, _ = compute_metrics(
+                        scores_id=scores_id, 
+                        scores_ood=scores_ood, 
+                        plot=False,
+                        threshold_strategy=threshold_strategy,
+                        target_tpr = target_tpr, 
+                    )
                     
                     auroc_scores.append(auroc)
                     aucpr_scores.append(aucpr)
@@ -191,7 +212,7 @@ def plot_bootstrap_results(bootstrap_results: Dict, save_path: str = None):
         Displays the matplotlib figure
     """
     
-    fig, axes = plt.subplots(2, 2, figsize=(15, 12))
+    fig, axes = plt.subplots(2, 2, figsize=(13, 10))
     
     # Reshape results for plotting
     n_fit_samples = bootstrap_results['n_fit_samples']
