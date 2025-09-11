@@ -74,18 +74,23 @@ The first run of `scripts/main.py` or `notebooks/part1_extract_descriptors.ipynb
 │
 ├── data/
 │   ├── datasets/      <- Datasets generated when running `scripts/main.py` or 
-│   │                     `notebooks/part1_extract_descriptors.ipynb`. 
+│   │                     `notebooks/part1_extract_descriptors.ipynb`. Contains
+│   │                     a filtered subset of the ID fit dataset, including only 
+│   │                     question-context pairs where the model’s generated answer 
+│   │                     matches the ground truth based on similarity metrics.
 │   │                     Initially empty.
 │   │
 │   └── models/        <- Model predictions generated when running `scripts/main.py` or 
-│                         `notebooks/part1_extract_descriptors.ipynb`.
-│                         Initially empty.
+│                         `notebooks/part1_extract_descriptors.ipynb`. Contains
+│                         descriptors (computed from hidden states, attention maps,
+│                         and logits on selected transformer layers). Initially empty.                       
 │
 ├── notebooks/         
 │   ├── part1_extract_descriptors.ipynb  
 │   │     <- Main notebook #1. Extracts descriptors (computed from hidden states,
-│   │        attention maps, and logits) that will later be used for OOD-based 
-│   │        hallucination detection. This notebook also serves as a usage example.
+│   │        attention maps, and logits on selected transformer layers) that will  
+│   │        later be used for OOD-based hallucination detection.  
+│   │        This notebook also serves as a usage example.
 │   │
 │   └── part2_analyse_results.ipynb
 │         <- Main notebook #2. Applies OOD methods, anomaly detection, linear probing, 
